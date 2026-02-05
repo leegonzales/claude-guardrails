@@ -1,0 +1,66 @@
+# claude-guardrails default configuration
+# Copy to ~/.claude/guardrails/config.toml to customize
+
+[general]
+# Safety level: critical | high | strict
+# - critical: Only block catastrophic operations (rm -rf /, fork bombs)
+# - high: Block critical + risky operations (force push main, secrets exposure)
+# - strict: Block all above + cautionary (any force push, sudo rm)
+safety_level = "high"
+
+# Enable audit logging
+audit_log = true
+
+# Path to audit log file (~ will be expanded)
+audit_path = "~/.claude/guardrails/audit.jsonl"
+
+[overrides]
+# Path to user allowlist file
+allowlist_file = "~/.claude/guardrails/allow.toml"
+
+[bash]
+# Commands that wrap other commands (analyzed recursively)
+wrappers = [
+    "sudo",
+    "timeout",
+    "xargs",
+    "env",
+    "nice",
+    "nohup",
+    "ionice",
+    "strace",
+    "time",
+    "unbuffer",
+    "watch",
+    "caffeinate",
+    "doas",
+]
+
+# Block variable-based command execution ($cmd, $(cmd), `cmd`)
+block_variable_commands = true
+
+# Block dangerous pipe targets (| sh, | bash, | python)
+block_pipe_to_shell = true
+
+[files]
+# File patterns to protect from Read/Edit/Write operations
+# These are regex patterns matched against the file path
+protected_patterns = [
+    "\\.env$",
+    "\\.env\\.local$",
+    "\\.env\\.production$",
+    "\\.ssh/id_(rsa|ed25519|ecdsa|dsa)$",
+    "\\.aws/credentials$",
+    "\\.kube/config$",
+    "\\.pem$",
+    "\\.p12$",
+    "\\.key$",
+    "credentials\\.json$",
+    "secrets?\\.(json|ya?ml|toml)$",
+    "\\.docker/config\\.json$",
+    "\\.netrc$",
+    "\\.npmrc$",
+    "\\.pypirc$",
+    "\\.pgpass$",
+    "\\.my\\.cnf$",
+]

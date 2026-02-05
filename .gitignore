@@ -1,0 +1,22 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# Audit log (created at runtime)
+audit.log
+*.jsonl
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Old bash implementation files (being replaced)
+guard.sh
+test.sh
+uninstall.sh
+patterns/

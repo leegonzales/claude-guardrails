@@ -1,0 +1,78 @@
+# claude-guardrails allowlist configuration
+# Copy to ~/.claude/guardrails/allow.toml to customize
+#
+# Each [[allow]] entry defines a pattern that bypasses security checks.
+# Be specific to avoid creating security holes!
+
+# ============================================================================
+# Common Safe Patterns
+# ============================================================================
+
+# Allow cleaning node_modules
+[[allow]]
+pattern = "rm\\s+-rf\\s+\\./node_modules"
+reason = "Cleaning node_modules is a common safe operation"
+tool = "Bash"
+
+# Allow cleaning dist/build directories
+[[allow]]
+pattern = "rm\\s+-rf\\s+\\./dist"
+reason = "Cleaning dist directory is safe"
+tool = "Bash"
+
+[[allow]]
+pattern = "rm\\s+-rf\\s+\\./build"
+reason = "Cleaning build directory is safe"
+tool = "Bash"
+
+# Allow force push to feature branches
+[[allow]]
+pattern = "git\\s+push\\s+(-f|--force)\\s+origin\\s+feature[-/]"
+reason = "Force push to feature branches is allowed"
+tool = "Bash"
+
+# ============================================================================
+# Environment Examples (for non-secret example files)
+# ============================================================================
+
+# Allow reading .env.example files
+[[allow]]
+pattern = "\\.env\\.example$"
+reason = "Example env files don't contain real secrets"
+tool = "Read"
+
+# Allow reading .env.template files
+[[allow]]
+pattern = "\\.env\\.template$"
+reason = "Template env files don't contain real secrets"
+
+# ============================================================================
+# Project-Specific Patterns (uncomment as needed)
+# ============================================================================
+
+# # Allow npm install with specific registries
+# [[allow]]
+# pattern = "npm\\s+install.+--registry"
+# reason = "npm install with custom registry"
+# tool = "Bash"
+
+# # Allow docker compose operations
+# [[allow]]
+# pattern = "docker-compose\\s+(up|down|restart)"
+# reason = "Docker compose is safe"
+# tool = "Bash"
+
+# ============================================================================
+# Notes
+# ============================================================================
+#
+# - Patterns are Rust regex syntax
+# - Use \\ to escape special characters (backslash needs double escape in TOML)
+# - tool = "Bash" | "Read" | "Edit" | "Write" | omit for all tools
+# - Test patterns carefully: be as specific as possible
+#
+# Security tips:
+# - Prefer specific paths over wildcards
+# - Add comments explaining why the pattern is safe
+# - Review this file periodically for stale entries
+# - Don't add patterns for operations you can do without YOLO mode
