@@ -209,6 +209,64 @@ pub const HIGH_RULES: &[Rule] = &[
         r"\bsudo\s+bash\s+-c\b",
         "Sudo executing bash command",
     ),
+    // === INTERPRETER -c/-e PATTERNS ===
+    // These can hide arbitrary command execution in string arguments
+    // The AST doesn't parse the string content, so we need regex rules
+    Rule::new(
+        "bash-c-dangerous",
+        SafetyLevel::High,
+        r#"\b(ba)?sh\s+-c\s+['"].*\brm\s+(-[rf]+\s+)*/"#,
+        "Shell -c with dangerous rm command",
+    ),
+    Rule::new(
+        "bash-c-rm-home",
+        SafetyLevel::High,
+        r#"\b(ba)?sh\s+-c\s+['"].*\brm\s+(-[rf]+\s+)*(~|\$HOME)"#,
+        "Shell -c with rm targeting home directory",
+    ),
+    Rule::new(
+        "bash-c-curl-pipe",
+        SafetyLevel::High,
+        r#"\b(ba)?sh\s+-c\s+['"].*\b(curl|wget)\b.*\|\s*(ba)?sh"#,
+        "Shell -c with curl pipe to shell (RCE)",
+    ),
+    Rule::new(
+        "python-c-os-system",
+        SafetyLevel::High,
+        r#"\bpython[23]?\s+-c\s+['"].*\b(os\.system|subprocess|exec|eval)\b"#,
+        "Python -c with code execution",
+    ),
+    Rule::new(
+        "node-e-exec",
+        SafetyLevel::High,
+        r#"\bnode\s+(-e|--eval)\s+['"].*\b(exec|spawn|child_process)"#,
+        "Node -e with process execution",
+    ),
+    Rule::new(
+        "perl-e-system",
+        SafetyLevel::High,
+        r#"\bperl\s+-e\s+['"].*\b(system|exec|`)"#,
+        "Perl -e with system execution",
+    ),
+    Rule::new(
+        "ruby-e-system",
+        SafetyLevel::High,
+        r#"\bruby\s+-e\s+['"].*\b(system|exec|`)"#,
+        "Ruby -e with system execution",
+    ),
+    // Eval with variable content
+    Rule::new(
+        "eval-variable",
+        SafetyLevel::High,
+        r"\beval\s+.*\$",
+        "Eval with variable content (code injection risk)",
+    ),
+    Rule::new(
+        "eval-command-sub",
+        SafetyLevel::High,
+        r"\beval\s+.*\$\(",
+        "Eval with command substitution (code injection risk)",
+    ),
 ];
 
 /// Strict level rules - cautionary operations
@@ -363,5 +421,38 @@ mod tests {
 
         assert!(critical.len() < high.len());
         assert!(high.len() < strict.len());
+    }
+
+    // === INTERPRETER -c TESTS ===
+
+    #[test]
+    fn test_bash_c_rm_root_matches() {
+        let re = Regex::new(r#"\b(ba)?sh\s+-c\s+['"].*\brm\s+(-[rf]+\s+)*/"#).unwrap();
+        assert!(re.is_match("bash -c 'rm -rf /'"));
+        assert!(re.is_match("sh -c \"rm -rf /\""));
+        assert!(re.is_match("bash -c 'echo test; rm -rf /'"));
+    }
+
+    #[test]
+    fn test_python_c_os_system_matches() {
+        let re = Regex::new(r#"\bpython[23]?\s+-c\s+['"].*\b(os\.system|subprocess|exec|eval)\b"#).unwrap();
+        assert!(re.is_match("python -c 'import os; os.system(\"id\")'"));
+        assert!(re.is_match("python3 -c \"import subprocess\""));
+        assert!(re.is_match("python -c 'eval(user_input)'"));
+    }
+
+    #[test]
+    fn test_eval_variable_matches() {
+        let re = Regex::new(r"\beval\s+.*\$").unwrap();
+        assert!(re.is_match("eval $cmd"));
+        assert!(re.is_match("eval \"$user_code\""));
+        assert!(re.is_match("eval something $var"));
+    }
+
+    #[test]
+    fn test_node_e_exec_matches() {
+        let re = Regex::new(r#"\bnode\s+(-e|--eval)\s+['"].*\b(exec|spawn|child_process)"#).unwrap();
+        assert!(re.is_match("node -e 'require(\"child_process\").exec(\"id\")'"));
+        assert!(re.is_match("node --eval \"const {spawn} = require('child_process')\""));
     }
 }

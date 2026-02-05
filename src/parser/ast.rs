@@ -18,6 +18,16 @@ static SHELL_INTERPRETERS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     .collect()
 });
 
+/// Wrapper commands that can execute other commands (for pipeline unwrapping)
+static PIPELINE_WRAPPERS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+    [
+        "xargs", "env", "sudo", "timeout", "nice", "nohup",
+        "ionice", "strace", "time", "unbuffer", "watch",
+    ]
+    .into_iter()
+    .collect()
+});
+
 /// Script interpreters (also dangerous as pipe targets)
 static SCRIPT_INTERPRETERS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
@@ -95,6 +105,21 @@ pub fn analyze_command(source: &str) -> CommandAnalysis {
 /// Analyze the parsed AST tree
 fn analyze_tree(tree: &Tree, source: &str) -> CommandAnalysis {
     let root = tree.root_node();
+
+    // CRITICAL FIX: Check if the tree has parse errors
+    // tree-sitter can return a partial tree with errors, which might miss dangerous patterns
+    // If there are errors, mark as not parsed to trigger fallback regex checks
+    if root.has_error() {
+        return CommandAnalysis {
+            commands: vec![],
+            has_dynamic_command: false,
+            has_pipe_to_shell: false,
+            has_pipe_to_interpreter: false,
+            parsed: false,
+            error: Some("AST contains parse errors - using fallback".to_string()),
+        };
+    }
+
     let mut commands = Vec::new();
     let mut has_dynamic_command = false;
     let mut has_pipe_to_shell = false;
@@ -315,28 +340,13 @@ fn check_pipelines(
         // Find the last command
         if let Some(last_cmd) = children.iter().rev().find(|c| c.kind() == "command") {
             if let Some(cmd) = extract_command(last_cmd, source) {
-                let normalized_name = cmd.name.to_lowercase();
-
-                // Check if it's a shell interpreter
-                if SHELL_INTERPRETERS.contains(normalized_name.as_str()) {
-                    *has_pipe_to_shell = true;
-                }
-
-                // Check if it's a script interpreter
-                if SCRIPT_INTERPRETERS.contains(normalized_name.as_str()) {
-                    *has_pipe_to_interpreter = true;
-                }
-
-                // Also check for env bash, env python, etc.
-                if normalized_name == "env" && !cmd.arguments.is_empty() {
-                    let first_arg = cmd.arguments[0].to_lowercase();
-                    if SHELL_INTERPRETERS.contains(first_arg.as_str()) {
-                        *has_pipe_to_shell = true;
-                    }
-                    if SCRIPT_INTERPRETERS.contains(first_arg.as_str()) {
-                        *has_pipe_to_interpreter = true;
-                    }
-                }
+                // Check the command and its arguments for interpreters
+                // This handles cases like: | xargs bash -c, | env sh, etc.
+                check_command_for_interpreters(
+                    &cmd,
+                    has_pipe_to_shell,
+                    has_pipe_to_interpreter,
+                );
             }
         }
     }
@@ -345,6 +355,63 @@ fn check_pipelines(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         check_pipelines(&child, source, has_pipe_to_shell, has_pipe_to_interpreter);
+    }
+}
+
+/// Check a command (and its arguments) for shell/script interpreters
+/// This handles wrappers like xargs, env, etc.
+fn check_command_for_interpreters(
+    cmd: &NormalizedCommand,
+    has_pipe_to_shell: &mut bool,
+    has_pipe_to_interpreter: &mut bool,
+) {
+    let normalized_name = cmd.name.to_lowercase();
+
+    // Direct interpreter check
+    if SHELL_INTERPRETERS.contains(normalized_name.as_str()) {
+        *has_pipe_to_shell = true;
+        return;
+    }
+    if SCRIPT_INTERPRETERS.contains(normalized_name.as_str()) {
+        *has_pipe_to_interpreter = true;
+        return;
+    }
+
+    // Check if this is a wrapper command
+    // If so, check the arguments for interpreters
+    if PIPELINE_WRAPPERS.contains(normalized_name.as_str()) && !cmd.arguments.is_empty() {
+        // For wrapper commands, check all arguments for interpreter names
+        // This catches: xargs bash, xargs sh -c, env bash, sudo bash, etc.
+        for arg in &cmd.arguments {
+            let arg_lower = arg.to_lowercase();
+            // Skip flags
+            if arg_lower.starts_with('-') {
+                continue;
+            }
+            // Check if this argument is an interpreter
+            if SHELL_INTERPRETERS.contains(arg_lower.as_str()) {
+                *has_pipe_to_shell = true;
+                return;
+            }
+            if SCRIPT_INTERPRETERS.contains(arg_lower.as_str()) {
+                *has_pipe_to_interpreter = true;
+                return;
+            }
+            // Also check for path-based interpreter names
+            if arg_lower.ends_with("/sh") || arg_lower.ends_with("/bash")
+                || arg_lower.ends_with("/zsh") || arg_lower.ends_with("/dash")
+            {
+                *has_pipe_to_shell = true;
+                return;
+            }
+            if arg_lower.ends_with("/python") || arg_lower.ends_with("/python3")
+                || arg_lower.ends_with("/ruby") || arg_lower.ends_with("/perl")
+                || arg_lower.ends_with("/node")
+            {
+                *has_pipe_to_interpreter = true;
+                return;
+            }
+        }
     }
 }
 
@@ -495,5 +562,36 @@ mod tests {
         let analysis = analyze_command("cat << EOF\nhello\nEOF");
         assert!(analysis.parsed);
         assert!(has_command(&analysis, "cat"));
+    }
+
+    // === NEW TESTS FOR CRITICAL FIXES ===
+
+    #[test]
+    fn test_xargs_bash_pipe_detected() {
+        // Critical fix: xargs bash should be detected as pipe to shell
+        let analysis = analyze_command("echo 'echo pwned' | xargs bash");
+        assert!(analysis.parsed);
+        assert!(analysis.has_pipe_to_shell, "xargs bash should be detected as pipe to shell");
+    }
+
+    #[test]
+    fn test_xargs_bash_c_pipe_detected() {
+        let analysis = analyze_command("echo 'rm -rf /' | xargs bash -c");
+        assert!(analysis.parsed);
+        assert!(analysis.has_pipe_to_shell, "xargs bash -c should be detected as pipe to shell");
+    }
+
+    #[test]
+    fn test_sudo_bash_pipe_detected() {
+        let analysis = analyze_command("cat script.sh | sudo bash");
+        assert!(analysis.parsed);
+        assert!(analysis.has_pipe_to_shell, "sudo bash should be detected as pipe to shell");
+    }
+
+    #[test]
+    fn test_xargs_python_pipe_detected() {
+        let analysis = analyze_command("echo 'import os' | xargs python3 -c");
+        assert!(analysis.parsed);
+        assert!(analysis.has_pipe_to_interpreter, "xargs python should be detected as pipe to interpreter");
     }
 }

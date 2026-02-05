@@ -116,6 +116,71 @@ pub const EXFILTRATION_RULES: &[Rule] = &[
         r"\btar\b.*\.ssh\b.*\|",
         "Tarring .ssh directory and piping",
     ),
+    // === ADDITIONAL EXFILTRATION PATTERNS ===
+    // wget exfiltration (identified in peer review)
+    Rule::new(
+        "wget-post-file",
+        SafetyLevel::High,
+        r"\bwget\b.*--post-file",
+        "Wget posting file data (potential exfiltration)",
+    ),
+    Rule::new(
+        "wget-post-data",
+        SafetyLevel::High,
+        r"\bwget\b.*--post-data",
+        "Wget posting data (potential exfiltration)",
+    ),
+    Rule::new(
+        "wget-method-post",
+        SafetyLevel::High,
+        r"\bwget\b.*--method=POST",
+        "Wget POST request (potential exfiltration)",
+    ),
+    // /dev/tcp exfiltration (identified in peer review)
+    Rule::new(
+        "dev-tcp-write",
+        SafetyLevel::High,
+        r">\s*/dev/tcp/",
+        "Writing to /dev/tcp (network exfiltration)",
+    ),
+    Rule::new(
+        "dev-udp-write",
+        SafetyLevel::High,
+        r">\s*/dev/udp/",
+        "Writing to /dev/udp (network exfiltration)",
+    ),
+    Rule::new(
+        "dev-tcp-redirect",
+        SafetyLevel::High,
+        r"/dev/tcp/[^\s]+",
+        "Using /dev/tcp (bash network socket)",
+    ),
+    // curl --data-binary (binary data upload)
+    Rule::new(
+        "curl-data-binary",
+        SafetyLevel::High,
+        r"\bcurl\b.*--data-binary\s+@",
+        "Curl uploading binary data from file",
+    ),
+    // AWS S3 copy of sensitive files
+    Rule::new(
+        "aws-s3-cp-env",
+        SafetyLevel::High,
+        r"\baws\s+s3\s+cp\b.*\.env\b",
+        "AWS S3 copying .env file",
+    ),
+    Rule::new(
+        "aws-s3-cp-ssh",
+        SafetyLevel::High,
+        r"\baws\s+s3\s+cp\b.*\.ssh/",
+        "AWS S3 copying SSH directory",
+    ),
+    Rule::new(
+        "aws-s3-cp-credentials",
+        SafetyLevel::High,
+        r"\baws\s+s3\s+cp\b.*credentials",
+        "AWS S3 copying credentials file",
+    ),
 ];
 
 /// Get all exfiltration rules
