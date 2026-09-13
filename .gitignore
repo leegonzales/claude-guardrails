@@ -20,3 +20,6 @@ guard.sh
 test.sh
 uninstall.sh
 patterns/
+
+# Local backups made while editing (not part of the project)
+.archive/

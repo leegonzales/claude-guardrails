@@ -72,8 +72,10 @@ pub fn check_command(
         // and arguments together
         let check_str = &cmd.full_command;
 
-        // Also try wrapper unwrapping on the full command
-        let unwrapped = wrapper::unwrap_command(check_str, &config.bash.wrappers);
+        // Commands genuinely nested inside this one — a wrapper prefix, or a shell
+        // `-c` payload. These are checked RAW, because a payload really is code:
+        // `bash -c "rm -rf /"` must still block. Nothing else is checked raw.
+        let unwrapped = wrapper::unwrap_nested_commands(check_str, &config.bash.wrappers);
 
         for unwrapped_cmd in &unwrapped {
             if let Some(decision) = check_against_rules(unwrapped_cmd, safety_level, bash_rules) {
@@ -81,8 +83,12 @@ pub fn check_command(
             }
         }
 
-        // Check normalized name + arguments for patterns that need the full context
-        if let Some(decision) = check_against_rules(check_str, safety_level, bash_rules) {
+        // Check normalized name + arguments for patterns that need the full context.
+        // Literals are blanked here so that an argument *describing* a dangerous
+        // command does not match as one; anything that is genuinely code inside a
+        // literal was already unwrapped and checked just above.
+        let redacted_cmd = shell::redact_literals(check_str);
+        if let Some(decision) = check_against_rules(&redacted_cmd, safety_level, bash_rules) {
             return decision;
         }
 
@@ -94,25 +100,37 @@ pub fn check_command(
 
     // 7. Also check the raw command for patterns the AST might miss
     // (e.g., compound commands split by ; && ||)
-    let parts = shell::split_compound_command(command);
+    //
+    // Scan with string literals and heredoc bodies blanked out. This pass looks for
+    // commands, and prose that merely *names* a dangerous command is not one. The
+    // genuine "quoted string is really code" case (bash -c "...") is unwrapped and
+    // checked by step 6 above, which runs on unredacted text.
+    let redacted = shell::redact_literals(command);
+    let parts = shell::split_compound_command(&redacted);
     for part in &parts {
         let part = part.trim();
         if part.is_empty() {
             continue;
         }
 
-        // Unwrap wrappers
-        let unwrapped = wrapper::unwrap_command(part, &config.bash.wrappers);
+        // The part is already redacted; check it directly, plus anything nested in it.
+        if let Some(decision) = check_against_rules(part, safety_level, bash_rules) {
+            return decision;
+        }
 
-        for cmd in &unwrapped {
+        for cmd in &wrapper::unwrap_nested_commands(part, &config.bash.wrappers) {
             if let Some(decision) = check_against_rules(cmd, safety_level, bash_rules) {
                 return decision;
             }
         }
 
-        if let Some(decision) = check_exfiltration(part, safety_level, exfil_rules) {
-            return decision;
-        }
+    }
+
+    // Exfiltration is checked on the RAW command, never redacted: an exfil payload
+    // legitimately lives inside quotes (`curl -d "$(cat ~/.ssh/id_rsa)" ...`), so
+    // blanking literals here would be the one place redaction removes real coverage.
+    if let Some(decision) = check_exfiltration(command, safety_level, exfil_rules) {
+        return decision;
     }
 
     Decision::allow("passed all checks")

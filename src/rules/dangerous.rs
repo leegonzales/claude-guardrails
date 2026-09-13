@@ -17,7 +17,11 @@ pub const CRITICAL_RULES: &[Rule] = &[
     Rule::new(
         "rm-home",
         SafetyLevel::Critical,
-        r"\brm\s+(-[rfv]+\s+)*(~|\$HOME|/home/\w+)\b",
+        // The tilde branch must not end in \b: `~` is not a word character, so a
+        // trailing \b can never match after it and `rm -rf ~` was allowed through.
+        // Anchor on end-of-command instead, which also keeps `rm -rf ~/Projects/build`
+        // allowed — deleting something *under* home is ordinary work.
+        r"\brm\s+(-[rfv]+\s+)*(?:(?:~|\$HOME)/?\s*$|/home/\w+\b)",
         "Attempting to delete home directory",
     ),
     Rule::new(
@@ -36,7 +40,9 @@ pub const CRITICAL_RULES: &[Rule] = &[
     Rule::new(
         "dd-disk-device",
         SafetyLevel::Critical,
-        r"\bdd\b.*\bof=/dev/(sd|nvme|hd|vd|xvd)[a-z]",
+        // NVMe devices are named nvme0n1, not nvme<letter>, so requiring a letter
+        // after the prefix let every real NVMe target through.
+        r"\bdd\b.*\bof=/dev/(sd|nvme|hd|vd|xvd)[a-z0-9]",
         "Writing directly to disk device",
     ),
     Rule::new(

@@ -39,6 +39,17 @@ pub fn unwrap_command(command: &str, wrappers: &[String]) -> Vec<String> {
         return vec![command.to_string()];
     }
 
+    // If the command is not wrapped at all, hand back the ORIGINAL text.
+    //
+    // The token round-trip below joins with spaces, which silently strips quoting:
+    // `grep "git reset --hard" audit.log` came back as
+    // `grep git reset --hard audit.log`, which then matched the hard-reset rule.
+    // A command that merely passes a dangerous-looking string as an argument is not
+    // executing it, and there is nothing to unwrap in that case anyway.
+    if !wrapper_set.contains(tokens[0].as_str()) {
+        return vec![command.to_string()];
+    }
+
     // Recursively unwrap
     let unwrapped = unwrap_tokens(&tokens, &wrapper_set);
 
@@ -51,6 +62,69 @@ pub fn unwrap_command(command: &str, wrappers: &[String]) -> Vec<String> {
     }
 
     results
+}
+
+/// Shells that take their program from a `-c` argument.
+const SHELL_DASH_C: &[&str] = &[
+    "sh", "bash", "zsh", "dash", "ksh", "/bin/sh", "/bin/bash", "/bin/zsh", "/bin/dash",
+    "/usr/bin/sh", "/usr/bin/bash", "/usr/bin/zsh",
+];
+
+/// Extract commands that are genuinely NESTED inside this one, and nothing else.
+///
+/// Differs from [`unwrap_command`] in what it does with an unwrapped command: that
+/// function falls back to returning the original text, which makes its output unsafe
+/// to treat as "code found inside a string". This one returns an empty vec instead,
+/// so a caller can scan real payloads with raw rules and everything else with
+/// redacted rules, and the two cases cannot be confused.
+///
+/// Handles both wrapper prefixes (`sudo rm -rf /`) and shell `-c` payloads
+/// (`bash -c "rm -rf /"`), including the two nested (`sudo bash -c "..."`).
+pub fn unwrap_nested_commands(command: &str, wrappers: &[String]) -> Vec<String> {
+    let wrapper_set: HashSet<&str> = wrappers.iter().map(|s| s.as_str()).collect();
+
+    let tokens = match shlex::split(command) {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+    if tokens.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+
+    // Shell -c payload: the quoted argument IS the program.
+    if SHELL_DASH_C.contains(&tokens[0].as_str()) {
+        if let Some(pos) = tokens.iter().position(|t| t == "-c") {
+            if let Some(payload) = tokens.get(pos + 1) {
+                out.push(payload.clone());
+                out.extend(unwrap_nested_commands(payload, wrappers));
+            }
+        }
+        return out;
+    }
+
+    // Wrapper prefix: sudo/env/xargs/... followed by the real command.
+    if wrapper_set.contains(tokens[0].as_str()) {
+        for cmd_tokens in unwrap_tokens(&tokens, &wrapper_set) {
+            let joined = cmd_tokens.join(" ");
+            if joined != command {
+                out.push(joined.clone());
+            }
+            // The unwrapped command may itself be `bash -c "..."`
+            if let Some(inner) = cmd_tokens.first() {
+                if SHELL_DASH_C.contains(&inner.as_str()) {
+                    if let Some(pos) = cmd_tokens.iter().position(|t| t == "-c") {
+                        if let Some(payload) = cmd_tokens.get(pos + 1) {
+                            out.push(payload.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    out
 }
 
 /// Recursively unwrap tokens

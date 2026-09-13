@@ -26,6 +26,12 @@ pub struct HookSpecificOutput {
     /// Permission decision: "allow" or "deny"
     #[serde(rename = "permissionDecision")]
     pub permission_decision: String,
+
+    /// Why the decision was made. Claude Code hands this to the model; systemMessage
+    /// only reaches the user's transcript. Without it a denied agent sees nothing but
+    /// "denied" and retries a different spelling instead of adjusting deliberately.
+    #[serde(rename = "permissionDecisionReason", skip_serializing_if = "Option::is_none")]
+    pub permission_decision_reason: Option<String>,
 }
 
 /// Decision result from the security engine
@@ -109,6 +115,7 @@ impl HookOutput {
             hook_specific_output: Some(HookSpecificOutput {
                 hook_event_name: "PreToolUse".to_string(),
                 permission_decision: "deny".to_string(),
+                permission_decision_reason: Some(format!("[guardrails] Blocked: {}", reason)),
             }),
             system_message: Some(format!("[guardrails] Blocked: {}", reason)),
         }
@@ -116,12 +123,14 @@ impl HookOutput {
 
     /// Create a deny response with rule ID and reason
     pub fn deny_with_rule(rule_id: &str, reason: &str) -> Self {
+        let text = format!("[guardrails:{}] Blocked: {}", rule_id, reason);
         HookOutput {
             hook_specific_output: Some(HookSpecificOutput {
                 hook_event_name: "PreToolUse".to_string(),
                 permission_decision: "deny".to_string(),
+                permission_decision_reason: Some(text.clone()),
             }),
-            system_message: Some(format!("[guardrails:{}] Blocked: {}", rule_id, reason)),
+            system_message: Some(text),
         }
     }
 
