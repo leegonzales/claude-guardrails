@@ -35,7 +35,10 @@ pub fn check_command(
     if config.bash.block_variable_commands && analysis.has_dynamic_command {
         return Decision::deny(
             "dynamic-command",
-            "Dynamic command execution detected (variable or command substitution in command position)",
+            "Dynamic command execution detected (variable or command substitution in command position). \
+             Write the command name literally: instead of `PY=/path/.venv/bin/python; $PY -m pytest`, \
+             run `/path/.venv/bin/python -m pytest`. Variables and $(...) are fine as arguments, \
+             never as the command itself. Do not retry the same form.",
         );
     }
 
