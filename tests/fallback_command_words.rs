@@ -175,19 +175,35 @@ fn a_command_after_a_here_document_with_a_stray_quote_is_judged() {
 #[test]
 fn here_document_text_is_data_not_commands() {
     for text in [
-        "cat <<'EOF'\n$X\nEOF",
-        "cat <<'EOF'\n$X hi\nEOF",
-        "cat <<'EOF'\n$(echo $X)\n`$X`\nEOF",
+        "cat <<'EOF'\necho $X\nEOF",
+        "cat <<'EOF'\nthe value is $X\nEOF",
         "cat <<EOF\n$X hi\nEOF",
         "cat <<EOF\n\"$X\" hi\nEOF",
-        "cat <<\"EOF\"\n$X hi\nEOF",
-        "cat <<\\EOF\n$X hi\nEOF",
+        "cat <<\"EOF\"\nsay $X hi\nEOF",
+        "cat <<\\EOF\nsay $X hi\nEOF",
         "cat <<-EOF\n\t$X hi\n\tEOF",
         "cat <<EOF | tr a b\n$X\nEOF",
         "cat <<A <<B\n$X\nA\n$X\nB",
         "cat << EOF\n$X\nEOF",
     ] {
         allowed_unreadable(text);
+    }
+}
+
+#[test]
+fn a_quoted_here_document_body_keeps_the_verdict_it_had() {
+    // A body line that starts with `$` or a backtick is judged as it was before
+    // here-documents were modelled. Treating quoted bodies as data is a separate change.
+    for text in [
+        "cat <<'EOF'\n$X\nEOF",
+        "cat <<'EOF'\n$X hi\nEOF",
+        "cat <<'EOF'\n$(echo $X)\n`$X`\nEOF",
+        "cat <<\"EOF\"\n$X hi\nEOF",
+        "cat <<\\EOF\n$X hi\nEOF",
+        "cat <<'EOF'\nsee (`x`) here\nEOF",
+        "cat <<'EOF'\n`code` is a word\nEOF",
+    ] {
+        judged_dynamic_unreadable(text);
     }
 }
 
@@ -202,6 +218,18 @@ fn a_substitution_in_an_unquoted_here_document_is_commands() {
     judged_dynamic_unreadable("cat <<EOF\n`\"$X\" hi`\nEOF");
     judged_dynamic_unreadable("cat <<EOF\nline $(echo a; $X hi)\nEOF");
     allowed_unreadable("cat <<EOF\n$(date) $(echo $X)\nEOF");
+}
+
+#[test]
+fn a_command_in_a_substitution_in_an_unquoted_here_document_is_judged() {
+    judged_dynamic_unreadable("cat <<EOF\n$( \"$X\" hi )\nEOF");
+    judged_dynamic_unreadable("cat <<EOF\nvalue: $( \"$X\" hi )\nEOF");
+    judged_dynamic_unreadable("cat <<EOF\nvalue: `\"$X\" hi`\nEOF");
+    judged_dynamic_unreadable("cat <<EOF\nvalue: `echo a; $X hi`\nEOF");
+    judged_dynamic_unreadable("cat <<-EOF\n\tvalue: $( $X hi )\n\tEOF");
+    judged_dynamic_unreadable("cat <<A <<B\nx\nA\nvalue: `$X hi`\nB");
+    allowed_unreadable("cat <<EOF\nvalue: $( ls \"$X\" )\nEOF");
+    allowed_unreadable("cat <<EOF\nvalue: `ls \"$X\"`\nEOF");
 }
 
 // ---------------------------------------------------------------------------

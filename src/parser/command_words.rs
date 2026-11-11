@@ -316,8 +316,17 @@ pub fn has_dynamic_command_word(command: &str) -> bool {
                 }
             }
             if quote == Quote::HereLit {
+                // The body is data, but this scan keeps the verdict it gave before
+                // here-documents were modelled: each line is judged as ordinary text,
+                // so a command word that holds `$` or a backtick is still denied.
+                // Loosening that is a separate change.
+                let start = i;
                 while i < chars.len() && chars[i] != '\n' {
                     i += 1;
+                }
+                let line: String = chars[start..i].iter().collect();
+                if has_dynamic_command_word(&line) {
+                    return true;
                 }
                 i += 1;
                 at_line_start = true;
@@ -732,7 +741,7 @@ mod tests {
     #[test]
     fn here_document_bodies_are_data() {
         for text in [
-            "cat <<'EOF'\n$X hi\nEOF",
+            "cat <<'EOF'\necho $X\nEOF",
             "cat <<EOF\n$X hi\nEOF",
             "cat <<-EOF\n\t$X\n\tEOF",
             "cat <<A <<B\n$X\nA\n$X\nB",
@@ -748,6 +757,7 @@ mod tests {
             "cat <<'EOF'\nx \"\nEOF\n\"$X\"",
             "cat <<EOF\n$($X hi)\nEOF",
             "cat <<EOF\n`$X`\nEOF",
+            "cat <<'EOF'\n$X hi\nEOF",
             "cat <<A <<B\nx '\nA\ny\nB\n$X",
             "cat <<<'x' ; $X",
         ] {
