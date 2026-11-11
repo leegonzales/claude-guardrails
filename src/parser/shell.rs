@@ -6,20 +6,22 @@ use regex::Regex;
 use once_cell::sync::Lazy;
 
 /// Check if a command contains variable-based command execution
-/// Detects: $cmd, ${cmd}, $(cmd), `cmd`
+/// Detects: $cmd, ${cmd}, $(cmd), `cmd`, bare or quoted ("$cmd", '$cmd', "${cmd}"),
+/// at the start of the input and at every later command position (after `;`, `&`, `|`,
+/// a newline, `(`, `{`, or a keyword such as `then`, `do`, `else`, `if`, `while`).
 pub fn has_variable_execution(command: &str) -> bool {
     static VARIABLE_EXEC_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
+        // A command position: the start of the input, an operator that starts a new
+        // command, a group, or a keyword that is followed by a command. A `(` that
+        // follows `$` or `(` is arithmetic or a substitution, not a group.
+        let position = r"(?:^|[;&|\n{]|(?:^|[^$(])\(|\b(?:then|do|else|elif|if|while|until)\b)\s*";
+        // A variable or substitution as the first part of the command word, optionally
+        // inside a quote.
+        let word = r#"["']?(?:\$\w|\$\{|\$\(|`)"#;
         vec![
-            // $variable followed by arguments (likely executing a command stored in variable)
-            Regex::new(r"^\s*\$\w+\s").unwrap(),
-            // ${variable} at start
-            Regex::new(r"^\s*\$\{\w+\}").unwrap(),
+            Regex::new(&format!("{position}{word}")).unwrap(),
             // eval with variable
             Regex::new(r"\beval\s+.*\$").unwrap(),
-            // Command substitution at start (suspicious)
-            Regex::new(r"^\s*\$\(").unwrap(),
-            // Backtick substitution at start (suspicious)
-            Regex::new(r"^\s*`").unwrap(),
         ]
     });
 
@@ -131,6 +133,45 @@ mod tests {
         assert!(!has_variable_execution("echo $HOME"));
         assert!(!has_variable_execution("ls -la $PWD"));
         assert!(!has_variable_execution("git status"));
+    }
+
+    #[test]
+    fn test_variable_execution_at_every_command_position() {
+        for form in [
+            "$X",
+            "\"$X\"",
+            "'$X'",
+            "${X}",
+            "\"${X}\"",
+            "$(echo x)",
+            "`echo x`",
+        ] {
+            for text in [
+                format!("{form} -la"),
+                format!(") ; {form} -la"),
+                format!(") && {form} -la"),
+                format!(") || {form} -la"),
+                format!(") | {form} -la"),
+                format!(")\n{form} -la"),
+                format!(") ; {{ {form} -la; }}"),
+                format!(") ; ( {form} -la )"),
+                format!("if {form}; then ls; fi )"),
+                format!(") ; then {form} -la"),
+            ] {
+                assert!(has_variable_execution(&text), "{text}");
+            }
+        }
+        // Static words, and a variable in argument position, do not match.
+        for text in [
+            ") ; ls -la",
+            ") && \"ls\" -la",
+            ") ; echo $X ; echo \"$X\" '$X' ${X}",
+            ") ; x=$(date); echo done",
+            ") ; echo $(( 1 + 2 ))",
+            ") ; echo $(date)",
+        ] {
+            assert!(!has_variable_execution(text), "{text}");
+        }
     }
 
     #[test]

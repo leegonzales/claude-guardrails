@@ -235,10 +235,18 @@ fn normalize_command_name(node: &Node, source: &str) -> (String, bool) {
                 let text = child.utf8_text(source.as_bytes()).unwrap_or("");
                 return (text.to_string(), false);
             }
-            // Quoted string - remove quotes
-            "string" | "raw_string" => {
+            // Quoted string - remove quotes. A quoted variable or substitution is the
+            // same command word as the bare one, so it gets the same verdict.
+            "string" => {
                 let text = child.utf8_text(source.as_bytes()).unwrap_or("");
-                return (strip_quotes(text), false);
+                return (strip_quotes(text), has_dynamic_parts(&child));
+            }
+            // A single-quoted word is not expanded by the shell, but a `$` or a backtick
+            // in a command word is the quoted form of the same thing: same verdict.
+            "raw_string" => {
+                let text = child.utf8_text(source.as_bytes()).unwrap_or("");
+                let is_dynamic = text.contains('$') || text.contains('`');
+                return (strip_quotes(text), is_dynamic);
             }
             _ => {}
         }
@@ -468,6 +476,28 @@ mod tests {
         let analysis = analyze_command("$(echo rm) -rf /");
         assert!(analysis.parsed);
         assert!(analysis.has_dynamic_command, "Command substitution should be detected as dynamic");
+    }
+
+    #[test]
+    fn test_quoted_variable_command_is_dynamic() {
+        for cmd in [
+            "$X -la",
+            "\"$X\" -la",
+            "'$X' -la",
+            "${X} -la",
+            "\"${X}\" -la",
+            "\"$(echo ls)\" -la",
+            "echo a; \"$X\" -la",
+        ] {
+            let analysis = analyze_command(cmd);
+            assert!(analysis.parsed, "{cmd}");
+            assert!(analysis.has_dynamic_command, "{cmd}");
+        }
+        for cmd in ["ls -la", "\"ls\" -la", "'ls' -la", "echo \"$X\" '$X' ${X}"] {
+            let analysis = analyze_command(cmd);
+            assert!(analysis.parsed, "{cmd}");
+            assert!(!analysis.has_dynamic_command, "{cmd}");
+        }
     }
 
     #[test]
