@@ -7,7 +7,7 @@
 use crate::config::{Config, SafetyLevel};
 use crate::output::Decision;
 use crate::parser::ast;
-use crate::parser::{shell, wrapper};
+use crate::parser::{literal, shell, wrapper};
 use crate::rules::dangerous;
 use crate::rules::exfiltration;
 
@@ -33,34 +33,102 @@ pub fn check_command(
     // 2. Check for dynamic command execution (variable/substitution in command position)
     // This is the strongest check - catches obfuscation attempts
     if config.bash.block_variable_commands && analysis.has_dynamic_command {
-        return Decision::deny(
-            "dynamic-command",
-            "Dynamic command execution detected (variable or command substitution in command position)",
-        );
+        return check_literal_resolution(command, config, safety_level, bash_rules, exfil_rules);
     }
 
+    check_rules(command, &analysis, config, safety_level, bash_rules, exfil_rules)
+        .unwrap_or_else(|| Decision::allow("passed all checks"))
+}
+
+/// A variable in command position was found. If every one of them is assigned a plain
+/// literal earlier in the same command, nothing is hidden: expand the literals and check
+/// the expanded command against every rule, as if it had been typed. Anything else stays
+/// blocked (steward-fd2k).
+fn check_literal_resolution(
+    command: &str,
+    config: &Config,
+    safety_level: SafetyLevel,
+    bash_rules: &RegexSet,
+    exfil_rules: &RegexSet,
+) -> Decision {
+    let blocked = || {
+        Decision::deny(
+            "dynamic-command",
+            "Dynamic command execution detected (variable or command substitution in command position)",
+        )
+    };
+
+    let Some(expanded) = literal::resolve(command) else {
+        return blocked();
+    };
+
+    // The detector that raised the block must now be satisfied: no variable or
+    // substitution left in command position, and the text must parse.
+    let expanded_analysis = ast::analyze_command(&expanded);
+    if !expanded_analysis.parsed || expanded_analysis.has_dynamic_command {
+        return blocked();
+    }
+
+    // Expanded text first, so a deny names the rule the real command trips. The original
+    // text is checked too, so nothing the old path would have caught can slip through.
+    if let Some(decision) = check_rules(
+        &expanded,
+        &expanded_analysis,
+        config,
+        safety_level,
+        bash_rules,
+        exfil_rules,
+    ) {
+        return decision;
+    }
+    let original_analysis = ast::analyze_command(command);
+    if let Some(decision) = check_rules(
+        command,
+        &original_analysis,
+        config,
+        safety_level,
+        bash_rules,
+        exfil_rules,
+    ) {
+        return decision;
+    }
+
+    Decision::allow("passed all checks (literal assignments resolved)")
+}
+
+/// Checks 3 to 7 on one command text and its analysis: pipes to interpreters,
+/// environment hijacking, each command against the rules, and exfiltration.
+/// `None` means nothing matched.
+fn check_rules(
+    command: &str,
+    analysis: &ast::CommandAnalysis,
+    config: &Config,
+    safety_level: SafetyLevel,
+    bash_rules: &RegexSet,
+    exfil_rules: &RegexSet,
+) -> Option<Decision> {
     // 3. Check for pipe to shell interpreter
     if config.bash.block_pipe_to_shell && analysis.has_pipe_to_shell {
-        return Decision::deny(
+        return Some(Decision::deny(
             "pipe-to-shell",
             "Piping to shell interpreter is blocked for security",
-        );
+        ));
     }
 
     // 4. Check for pipe to script interpreter (python, ruby, etc.)
     if config.bash.block_pipe_to_shell && analysis.has_pipe_to_interpreter {
-        return Decision::deny(
+        return Some(Decision::deny(
             "pipe-to-interpreter",
             "Piping to script interpreter is blocked for security",
-        );
+        ));
     }
 
     // 5. Check for environment hijacking (this uses regex but on full command)
     if shell::has_env_hijacking(command) {
-        return Decision::deny(
+        return Some(Decision::deny(
             "env-hijacking",
             "Environment variable hijacking detected",
-        );
+        ));
     }
 
     // 6. Check each normalized command against dangerous patterns
@@ -77,18 +145,18 @@ pub fn check_command(
 
         for unwrapped_cmd in &unwrapped {
             if let Some(decision) = check_against_rules(unwrapped_cmd, safety_level, bash_rules) {
-                return decision;
+                return Some(decision);
             }
         }
 
         // Check normalized name + arguments for patterns that need the full context
         if let Some(decision) = check_against_rules(check_str, safety_level, bash_rules) {
-            return decision;
+            return Some(decision);
         }
 
         // Check for exfiltration
         if let Some(decision) = check_exfiltration(check_str, safety_level, exfil_rules) {
-            return decision;
+            return Some(decision);
         }
     }
 
@@ -106,16 +174,16 @@ pub fn check_command(
 
         for cmd in &unwrapped {
             if let Some(decision) = check_against_rules(cmd, safety_level, bash_rules) {
-                return decision;
+                return Some(decision);
             }
         }
 
         if let Some(decision) = check_exfiltration(part, safety_level, exfil_rules) {
-            return decision;
+            return Some(decision);
         }
     }
 
-    Decision::allow("passed all checks")
+    None
 }
 
 /// Fallback checking when AST parsing fails
