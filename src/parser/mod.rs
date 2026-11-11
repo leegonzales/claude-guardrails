@@ -4,6 +4,7 @@
 
 pub mod ast;
 pub mod command_words;
+mod command_words_legacy;
 pub mod rm_home;
 pub mod shell;
 pub mod wrapper;

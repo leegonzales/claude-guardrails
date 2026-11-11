@@ -79,15 +79,12 @@ fn a_command_word_after_a_named_descriptor_redirection_is_judged() {
 #[test]
 fn a_redirection_target_is_not_a_command_word() {
     for text in [
-        "\"ls\">$X",
-        "\"ls\">\"$X\"",
         "ls >$X",
         "ls <$X",
         "ls 2>$X",
         "ls >f $X",
         "ls <f $X",
         ">$X ls",
-        "<$X ls",
         "A=1 >$X ls",
     ] {
         allowed_unreadable(text);
@@ -174,17 +171,19 @@ fn a_command_after_a_here_document_with_a_stray_quote_is_judged() {
 
 #[test]
 fn here_document_text_is_data_not_commands() {
+    // A body line that starts with `$` or a backtick is a command word to the scan that
+    // shipped before this change, which still runs first: see the next test.
     for text in [
         "cat <<'EOF'\necho $X\nEOF",
         "cat <<'EOF'\nthe value is $X\nEOF",
-        "cat <<EOF\n$X hi\nEOF",
-        "cat <<EOF\n\"$X\" hi\nEOF",
+        "cat <<EOF\nsay $X hi\nEOF",
+        "cat <<EOF\nsay \"$X\" hi\nEOF",
         "cat <<\"EOF\"\nsay $X hi\nEOF",
         "cat <<\\EOF\nsay $X hi\nEOF",
-        "cat <<-EOF\n\t$X hi\n\tEOF",
-        "cat <<EOF | tr a b\n$X\nEOF",
-        "cat <<A <<B\n$X\nA\n$X\nB",
-        "cat << EOF\n$X\nEOF",
+        "cat <<-EOF\n\tsay $X hi\n\tEOF",
+        "cat <<EOF | tr a b\nsay $X\nEOF",
+        "cat <<A <<B\nsay $X\nA\nsay $X\nB",
+        "cat << EOF\nsay $X\nEOF",
     ] {
         allowed_unreadable(text);
     }
@@ -217,7 +216,7 @@ fn a_substitution_in_an_unquoted_here_document_is_commands() {
     judged_dynamic_unreadable("cat <<EOF\n$($X hi)\nEOF");
     judged_dynamic_unreadable("cat <<EOF\n`\"$X\" hi`\nEOF");
     judged_dynamic_unreadable("cat <<EOF\nline $(echo a; $X hi)\nEOF");
-    allowed_unreadable("cat <<EOF\n$(date) $(echo $X)\nEOF");
+    allowed_unreadable("cat <<EOF\necho $(date) $(echo $X)\nEOF");
 }
 
 #[test]
@@ -319,6 +318,8 @@ fn an_arithmetic_or_process_substitution_argument_stays_allowed() {
 fn input_the_earlier_scan_denied_is_still_denied() {
     for row in [
         "\"ls\">$X",
+        "\"ls\">\"$X\"",
+        "<$X ls",
         "{fd}>$X ls",
         "cat <<EOF\ntext; \"$X\"\nEOF",
         "cat <<'$X'\n$X\n",
@@ -395,5 +396,22 @@ fn an_arithmetic_command_is_not_a_dynamic_command_name() {
 fn an_arithmetic_or_process_substitution_as_the_command_name_is_dynamic() {
     for text in ["$(( 1 + 2 )) hi", "$((1 + 2))", "<(date) hi", ">(cat) hi"] {
         assert_judged_dynamic(text);
+    }
+}
+
+#[test]
+fn a_numbered_redirection_before_a_variable_command_is_judged() {
+    // The parser reads `0<f $X hi` as the command `0` with a redirection, so the real command is a later word.
+    for text in [
+        "X=printf; 0<f $X hi",
+        "X=printf; 0>f $X hi",
+        "0<f $X hi",
+        "0<f \"$X\" hi",
+        "X=p; 0<f echo hi",
+    ] {
+        assert_judged_dynamic(text);
+    }
+    for text in ["echo hi 0<f", "ls 0<f $X", "ls 0>f"] {
+        assert_allowed(text);
     }
 }

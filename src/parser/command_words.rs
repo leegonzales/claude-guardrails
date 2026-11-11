@@ -11,7 +11,11 @@
 //! substitutions, after a keyword (`then`, `do`, `else`, `elif`, `if`, `while`,
 //! `until`, `{`, `!`), and after leading assignments and redirections.
 //!
-//! The scan models only that. Here-document bodies are modelled too: a quoted body is
+//! The verdict is two scans. The scan that shipped before steward-bq2l, kept unchanged in
+//! `command_words_legacy`, runs first and denies whatever it denied. The scan in this file
+//! runs second and can only add denials, so a change here never allows what was denied.
+//!
+//! The scan in this file models only that. Here-document bodies are modelled too: a quoted body is
 //! data and is skipped, an unquoted body is data except for `$( )` and backticks.
 //!
 //! For any other syntax the scan does not guess. It enters the LOST state: from that
@@ -67,6 +71,8 @@ struct Here {
     strip: bool,
     /// The delimiter was quoted, so the body is data.
     quoted: bool,
+    /// Quote removal on the delimiter is simple enough to be sure what it is.
+    simple: bool,
 }
 
 impl Here {
@@ -80,8 +86,25 @@ impl Here {
             delim,
             strip,
             quoted,
+            simple: simple_delimiter(raw),
         }
     }
+}
+
+/// A delimiter that is plain, wholly in one pair of quotes with nothing odd inside, or
+/// one plain word after one backslash. Anything else (mixed quoting, a quote inside
+/// quotes, `$`, a backtick, a backslash inside) is not trusted.
+fn simple_delimiter(raw: &str) -> bool {
+    let odd = |t: &str| t.contains(['\'', '"', '\\', '$', '`']);
+    let wrapped = |q: char| raw.len() >= 3 && raw.starts_with(q) && raw.ends_with(q);
+    let body = if wrapped('\'') || wrapped('"') {
+        &raw[1..raw.len() - 1]
+    } else if raw.len() >= 2 && raw.starts_with('\\') {
+        &raw[1..]
+    } else {
+        raw
+    };
+    !body.is_empty() && !odd(body)
 }
 
 #[derive(Clone, Default)]
@@ -109,7 +132,7 @@ struct Frame {
     after: bool,
 }
 
-const OPERATORS: &str = r"(?:>>?|<<<?|>&|<&|>\||&>>?|<>|<)";
+const OPERATORS: &str = r"(?:>>?|<<<?|<<-|>&|<&|>\||&>>?|<>|<)";
 
 static ASSIGNMENT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=").unwrap());
@@ -156,23 +179,30 @@ impl Scan {
     }
 
     /// Record the here-document that this word starts, or whose delimiter it is.
-    fn note_here(&mut self, word: &str, found: &mut Vec<Here>) {
+    /// Returns true when the delimiter is one the scan does not trust.
+    fn note_here(&mut self, word: &str, found: &mut Vec<Here>) -> bool {
         if let Some(strip) = self.here_op.take() {
-            found.push(Here::new(word, strip));
-            return;
+            let here = Here::new(word, strip);
+            let untrusted = !here.simple;
+            found.push(here);
+            return untrusted;
         }
         if let Some(caps) = HEREDOC.captures(word) {
             let rest = &caps[2];
             if rest.starts_with('<') {
-                return; // a here-string, `<<<`
+                return false; // a here-string, `<<<`
             }
             let strip = &caps[1] == "-";
             if rest.is_empty() {
                 self.here_op = Some(strip);
             } else {
-                found.push(Here::new(rest, strip));
+                let here = Here::new(rest, strip);
+                let untrusted = !here.simple;
+                found.push(here);
+                return untrusted;
             }
         }
+        false
     }
 
     /// End the word and judge it.
@@ -182,9 +212,22 @@ impl Scan {
         }
         let word = std::mem::take(&mut self.word);
         let dynamic = std::mem::take(&mut self.dynamic);
-        self.note_here(&word, found);
-        if FD_REDIRECT.is_match(&word) {
-            return Outcome::Lost;
+        let untrusted = self.note_here(&word, found);
+        match self.judge(&word, dynamic, suppressed) {
+            Outcome::Ok if untrusted => Outcome::Lost,
+            outcome => outcome,
+        }
+    }
+
+    fn judge(&mut self, word: &str, dynamic: bool, suppressed: bool) -> Outcome {
+        if FD_REDIRECT.is_match(word) {
+            // At a command position the redirection comes before the command, and the
+            // scan cannot say which word that is: judge it on its own.
+            return if self.at_cmd && !self.redirect && !suppressed {
+                Outcome::Dynamic
+            } else {
+                Outcome::Lost
+            };
         }
         if suppressed {
             return Outcome::Ok;
@@ -201,15 +244,15 @@ impl Scan {
             self.redirect = false;
             return Outcome::Ok;
         }
-        if is_keyword(&word) || ASSIGNMENT.is_match(&word) {
+        if is_keyword(word) || ASSIGNMENT.is_match(word) {
             return Outcome::Ok;
         }
-        if REDIRECT.is_match(&word) {
-            self.redirect = REDIRECT_ONLY.is_match(&word);
+        if REDIRECT.is_match(word) {
+            self.redirect = REDIRECT_ONLY.is_match(word);
             return Outcome::Ok;
         }
         self.cmd_pos = false;
-        if is_unmodelled(&word) {
+        if is_unmodelled(word) {
             Outcome::Lost
         } else if dynamic {
             Outcome::Dynamic
@@ -254,7 +297,12 @@ fn body_quote(here: &Here) -> Quote {
 
 /// True when a command word, at any command position, holds `$` or a backtick, or when
 /// the input uses syntax the scan does not model and holds `$` or a backtick after it.
+/// The earlier scan runs first, so this denies everything it denied.
 pub fn has_dynamic_command_word(command: &str) -> bool {
+    super::command_words_legacy::has_dynamic_command_word(command) || scan(command)
+}
+
+fn scan(command: &str) -> bool {
     let chars: Vec<char> = command.chars().collect();
     let mut s = Scan::new();
     let mut quote = Quote::None;
@@ -266,6 +314,8 @@ pub fn has_dynamic_command_word(command: &str) -> bool {
     let mut pending: VecDeque<Here> = VecDeque::new();
     let mut here: Option<Here> = None;
     let mut at_line_start = false;
+    // Where the body of the here-document being read starts.
+    let mut body_start = 0;
     // The scan met syntax it does not model.
     let mut lost = false;
 
@@ -308,6 +358,7 @@ pub fn has_dynamic_command_word(command: &str) -> bool {
                             Some(h) => {
                                 quote = body_quote(h);
                                 at_line_start = true;
+                                body_start = i;
                             }
                             None => quote = Quote::None,
                         }
@@ -316,17 +367,8 @@ pub fn has_dynamic_command_word(command: &str) -> bool {
                 }
             }
             if quote == Quote::HereLit {
-                // The body is data, but this scan keeps the verdict it gave before
-                // here-documents were modelled: each line is judged as ordinary text,
-                // so a command word that holds `$` or a backtick is still denied.
-                // Loosening that is a separate change.
-                let start = i;
                 while i < chars.len() && chars[i] != '\n' {
                     i += 1;
-                }
-                let line: String = chars[start..i].iter().collect();
-                if has_dynamic_command_word(&line) {
-                    return true;
                 }
                 i += 1;
                 at_line_start = true;
@@ -506,6 +548,7 @@ pub fn has_dynamic_command_word(command: &str) -> bool {
                             quote = body_quote(&h);
                             here = Some(h);
                             at_line_start = true;
+                            body_start = i + 1;
                         }
                     }
                 }
@@ -522,7 +565,11 @@ pub fn has_dynamic_command_word(command: &str) -> bool {
             }
             '<' | '>' => {
                 if next == Some('(') {
-                    // Process substitution: not modelled.
+                    // Process substitution: not modelled. As the command name it is
+                    // dynamic, as on the parsed path.
+                    if s.word.is_empty() && s.cmd_pos && !s.redirect && !suppressed {
+                        return true;
+                    }
                     i += 1;
                     lost = true;
                 } else {
@@ -549,6 +596,9 @@ pub fn has_dynamic_command_word(command: &str) -> bool {
                 } else if s.word == "=" {
                     // zsh `=( ... )`: not modelled.
                     lost = true;
+                } else if blank_paren(&chars, i + 1) {
+                    // `name( )`: a function definition the scan does not follow.
+                    return true;
                 } else if next == Some(')') {
                     // A function definition, `name()`: the body is a command.
                     outcome!(s.finish(suppressed, &mut found));
@@ -594,8 +644,15 @@ pub fn has_dynamic_command_word(command: &str) -> bool {
 
     // The input ended inside a quote, a substitution or a group. Check the words that
     // are still open, innermost first.
-    if quote == Quote::Here {
-        // The rest is the body of a here-document, which is data.
+    if matches!(quote, Quote::Here | Quote::HereLit) {
+        // The delimiter was never matched. The scan may have misread it, so the rest of
+        // the input is not known to be data: a `$` or a backtick in it is judged.
+        if chars[body_start.min(chars.len())..]
+            .iter()
+            .any(|c| matches!(c, '$' | '`'))
+        {
+            return true;
+        }
         s.word.clear();
         s.dynamic = false;
     }
@@ -611,6 +668,13 @@ pub fn has_dynamic_command_word(command: &str) -> bool {
         }
     }
     false
+}
+
+/// Blanks and then `)` at `pos`, with at least one blank.
+fn blank_paren(chars: &[char], pos: usize) -> bool {
+    let rest = &chars[pos.min(chars.len())..];
+    let blanks = rest.iter().take_while(|c| matches!(c, ' ' | '\t')).count();
+    blanks > 0 && rest.get(blanks) == Some(&')')
 }
 
 /// The words inside `x=( ... )` and `*( ... )` are not commands.
@@ -691,7 +755,6 @@ mod tests {
             "echo hi > f $X",
             "echo hi 2>&1 $X",
             "echo hi <f $X",
-            "\"ls\">$X",
             "A=1 ls $X",
             "x=$(date); ls",
             "echo $((1 + 2))",
@@ -703,6 +766,11 @@ mod tests {
         ] {
             assert!(!dynamic(text), "{text}");
         }
+    }
+
+    #[test]
+    fn a_quoted_name_joined_to_a_redirection_is_one_dynamic_word() {
+        assert!(dynamic("\"ls\">$X"));
     }
 
     #[test]
@@ -742,13 +810,13 @@ mod tests {
     fn here_document_bodies_are_data() {
         for text in [
             "cat <<'EOF'\necho $X\nEOF",
-            "cat <<EOF\n$X hi\nEOF",
-            "cat <<-EOF\n\t$X\n\tEOF",
-            "cat <<A <<B\n$X\nA\n$X\nB",
-            "cat <<EOF\n$(date)\nEOF",
+            "cat <<EOF\nsay $X hi\nEOF",
+            "cat <<-EOF\n\tsay $X\n\tEOF",
+            "cat <<A <<B\nsay $X\nA\nsay $X\nB",
+            "cat <<EOF\necho $(date)\nEOF",
             "cat <<EOF\nx '\nEOF\nls",
             "cat <<'EOF'\nx \"\nEOF\nls",
-            "cat <<EOF\n$X",
+            "cat <<EOF\necho hi",
         ] {
             assert!(!dynamic(text), "{text}");
         }
@@ -757,11 +825,50 @@ mod tests {
             "cat <<'EOF'\nx \"\nEOF\n\"$X\"",
             "cat <<EOF\n$($X hi)\nEOF",
             "cat <<EOF\n`$X`\nEOF",
-            "cat <<'EOF'\n$X hi\nEOF",
             "cat <<A <<B\nx '\nA\ny\nB\n$X",
             "cat <<<'x' ; $X",
+            "cat <<'EOF'\n$X hi\nEOF",
+            "cat <<EOF\n$X",
+            "cat <<'E\"OF'\nx\nE\"OF\n\"abc\necho $X\" hi",
         ] {
             assert!(dynamic(text), "{text}");
         }
+    }
+
+    /// Every text built from `parts`, with exactly `n` parts.
+    fn sequences(parts: &[&str], n: usize) -> Vec<String> {
+        let mut all = vec![String::new()];
+        for _ in 0..n {
+            all = all
+                .iter()
+                .flat_map(|t| parts.iter().map(move |p| format!("{t}{p}")))
+                .collect();
+        }
+        all
+    }
+
+    /// The verdict is never looser than the scan that shipped before this change.
+    #[test]
+    fn nothing_the_earlier_scan_denied_is_allowed() {
+        use super::super::command_words_legacy::has_dynamic_command_word as earlier;
+        let wide = [
+            "$X", "\"$X\"", "`$X`", "$(", ")", "(", "`", "'", "\"", "\\", "\n", " ", ";", "|", "&",
+            "<", ">", "<<", "<<-", "<<'E'", "<<E", "E", "{fd}>", "<(", "f( )", "case", "[[",
+            "echo", "$((", "))", "{", "}", "if", "then", "#",
+        ];
+        let narrow = ["$X", "<<E", "<<'E'", "\n", "E", " ", "'", "`", ";", "\\"];
+        let (mut seen, mut checked) = (0u32, 0u32);
+        for text in (0..=3)
+            .flat_map(|n| sequences(&wide, n))
+            .chain(sequences(&narrow, 5))
+            .chain(sequences(&narrow, 6))
+        {
+            checked += 1;
+            if earlier(&text) {
+                seen += 1;
+                assert!(dynamic(&text), "{text:?}");
+            }
+        }
+        assert!(seen > 10_000 && checked > 1_000_000, "{seen} of {checked}");
     }
 }

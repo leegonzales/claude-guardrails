@@ -268,8 +268,12 @@ fn normalize_command_name(node: &Node, source: &str) -> (String, bool) {
                 return (text.to_string(), true);
             }
             // An arithmetic or process substitution as the command name is dynamic too.
+            // A bare `(( ... ))` is an arithmetic command, not a substitution.
             "arithmetic_expansion" | "process_substitution" => {
                 let text = child.utf8_text(source.as_bytes()).unwrap_or("$((...))");
+                if text.starts_with("((") {
+                    return (text.to_string(), false);
+                }
                 return (text.to_string(), true);
             }
             // Concatenation (like ba'sh') - normalize it
@@ -283,6 +287,13 @@ fn normalize_command_name(node: &Node, source: &str) -> (String, bool) {
             "word" => {
                 let text = child.utf8_text(source.as_bytes()).unwrap_or("");
                 return (text.to_string(), false);
+            }
+            // The parser reads `0<f $X hi` as the command `0` with a redirection and
+            // takes the real command for a redirection target. A number is not a command
+            // name, so it gets the dynamic verdict.
+            "number" => {
+                let text = child.utf8_text(source.as_bytes()).unwrap_or("0");
+                return (text.to_string(), true);
             }
             // Quoted string - remove quotes. A quoted variable or substitution is the
             // same command word as the bare one, so it gets the same verdict.
