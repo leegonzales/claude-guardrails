@@ -35,9 +35,7 @@ pub enum ToolInput {
     },
 
     /// File read operation
-    Read {
-        file_path: String,
-    },
+    Read { file_path: String },
 
     /// File edit operation
     Edit {
@@ -47,15 +45,10 @@ pub enum ToolInput {
     },
 
     /// File write operation
-    Write {
-        file_path: String,
-        content: String,
-    },
+    Write { file_path: String, content: String },
 
     /// Unknown tool - pass through
-    Unknown {
-        raw: serde_json::Value,
-    },
+    Unknown { raw: serde_json::Value },
 }
 
 impl<'de> Deserialize<'de> for ToolInput {
@@ -72,7 +65,10 @@ impl<'de> Deserialize<'de> for ToolInput {
             if let Some(command) = obj.get("command").and_then(|v| v.as_str()) {
                 return Ok(ToolInput::Bash {
                     command: command.to_string(),
-                    description: obj.get("description").and_then(|v| v.as_str()).map(String::from),
+                    description: obj
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
                     timeout: obj.get("timeout").and_then(|v| v.as_u64()),
                 });
             }

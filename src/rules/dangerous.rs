@@ -380,7 +380,12 @@ mod tests {
             .chain(STRICT_RULES.iter())
         {
             let result = Regex::new(rule.pattern);
-            assert!(result.is_ok(), "Rule {} has invalid pattern: {}", rule.id, rule.pattern);
+            assert!(
+                result.is_ok(),
+                "Rule {} has invalid pattern: {}",
+                rule.id,
+                rule.pattern
+            );
         }
     }
 
@@ -435,7 +440,8 @@ mod tests {
 
     #[test]
     fn test_python_c_os_system_matches() {
-        let re = Regex::new(r#"\bpython[23]?\s+-c\s+['"].*\b(os\.system|subprocess|exec|eval)\b"#).unwrap();
+        let re = Regex::new(r#"\bpython[23]?\s+-c\s+['"].*\b(os\.system|subprocess|exec|eval)\b"#)
+            .unwrap();
         assert!(re.is_match("python -c 'import os; os.system(\"id\")'"));
         assert!(re.is_match("python3 -c \"import subprocess\""));
         assert!(re.is_match("python -c 'eval(user_input)'"));
@@ -451,7 +457,8 @@ mod tests {
 
     #[test]
     fn test_node_e_exec_matches() {
-        let re = Regex::new(r#"\bnode\s+(-e|--eval)\s+['"].*\b(exec|spawn|child_process)"#).unwrap();
+        let re =
+            Regex::new(r#"\bnode\s+(-e|--eval)\s+['"].*\b(exec|spawn|child_process)"#).unwrap();
         assert!(re.is_match("node -e 'require(\"child_process\").exec(\"id\")'"));
         assert!(re.is_match("node --eval \"const {spawn} = require('child_process')\""));
     }

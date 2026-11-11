@@ -197,7 +197,10 @@ impl Config {
 
     /// Get the audit log path (expanded)
     pub fn audit_path(&self) -> Option<PathBuf> {
-        self.general.audit_path.as_ref().map(|p| Self::expand_path(p))
+        self.general
+            .audit_path
+            .as_ref()
+            .map(|p| Self::expand_path(p))
     }
 
     /// Get the allowlist file path (expanded)
