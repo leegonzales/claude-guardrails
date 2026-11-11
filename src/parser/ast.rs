@@ -267,6 +267,11 @@ fn normalize_command_name(node: &Node, source: &str) -> (String, bool) {
                 let text = child.utf8_text(source.as_bytes()).unwrap_or("$(...)");
                 return (text.to_string(), true);
             }
+            // An arithmetic or process substitution as the command name is dynamic too.
+            "arithmetic_expansion" | "process_substitution" => {
+                let text = child.utf8_text(source.as_bytes()).unwrap_or("$((...))");
+                return (text.to_string(), true);
+            }
             // Concatenation (like ba'sh') - normalize it
             "concatenation" => {
                 let normalized = normalize_concatenation(&child, source);
@@ -344,7 +349,11 @@ fn normalize_concatenation(node: &Node, source: &str) -> String {
 /// quoted form of the same thing, so it gets the same verdict as the bare form.
 fn has_dynamic_parts(node: &Node, source: &str) -> bool {
     match node.kind() {
-        "simple_expansion" | "expansion" | "command_substitution" => true,
+        "simple_expansion"
+        | "expansion"
+        | "command_substitution"
+        | "arithmetic_expansion"
+        | "process_substitution" => true,
         "raw_string" => {
             let text = node.utf8_text(source.as_bytes()).unwrap_or("");
             text.contains('$') || text.contains('`')
