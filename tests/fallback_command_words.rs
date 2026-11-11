@@ -309,3 +309,91 @@ fn an_arithmetic_or_process_substitution_argument_stays_allowed() {
         assert_allowed(text);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Round 2. The scan that shipped before this change runs first and denies whatever it
+// denied, so this change only adds denials. These rows were found allowed by review.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn input_the_earlier_scan_denied_is_still_denied() {
+    for row in [
+        "\"ls\">$X",
+        "{fd}>$X ls",
+        "cat <<EOF\ntext; \"$X\"\nEOF",
+        "cat <<'$X'\n$X\n",
+        "cat <<'EOF'\necho '\necho x'; $X hi\nEOF",
+        "cat <<EOF\nEO\\\nF\n\"$X\" hi",
+        "cat <<OUT\n$(cat <<IN\n)\nIN\n\"$X\"\n)\nOUT",
+        "cat <<EOF\n$X hi\nEOF",
+        "cat <<EOF\n\"$X\" hi\nEOF",
+        "cat <<EOF | tr a b\n$X\nEOF",
+    ] {
+        judged_dynamic_unreadable(row);
+    }
+}
+
+#[test]
+fn a_here_document_the_scan_cannot_follow_is_lost() {
+    // A delimiter that is never matched: the rest of the input is not known.
+    judged_dynamic_unreadable("cat <<EOF\necho $X");
+    judged_dynamic_unreadable("cat <<'EOF'\necho $X\n");
+    judged_dynamic_unreadable("cat <<EOF\necho `date`");
+    allowed_unreadable("cat <<EOF\necho hi");
+    // A delimiter whose quote removal is not simple.
+    judged_dynamic_unreadable("cat <<'E\"OF'\nx\nE\"OF\n\"abc\necho $X\" hi");
+    judged_dynamic_unreadable("cat <<E\"O\"F\nx\nEOF\n\"$X\" hi");
+    judged_dynamic_unreadable("cat <<E\\OF\nx\nEOF\necho \"$X\"");
+    // A plain delimiter, quoted or not, is followed.
+    allowed_unreadable("cat <<EOF\necho $X\nEOF");
+    allowed_unreadable("cat <<'EOF'\necho $X\nEOF");
+    allowed_unreadable("cat <<\"EOF\"\necho $X\nEOF");
+    allowed_unreadable("cat <<\\EOF\necho $X\nEOF");
+}
+
+#[test]
+fn a_construct_the_scan_loses_at_a_command_position_is_judged_on_its_own() {
+    judged_dynamic_unreadable("<(date) hi");
+    judged_dynamic_unreadable(">(cat) hi");
+    judged_dynamic_unreadable("{fd}>f ls");
+    judged_dynamic_unreadable("f( ) if \"$X\"; then :; fi");
+    judged_dynamic_unreadable("f( ) { true; }");
+    judged_dynamic_unreadable("f(\t) { true; }");
+    // Not at a command position: only a later `$` or backtick is judged.
+    allowed_unreadable("cat <(date)");
+    allowed_unreadable("cat < <(date)");
+    allowed_unreadable("exec {fd}>f");
+    allowed_unreadable("echo hi {fd}>f");
+}
+
+#[test]
+fn a_here_document_operator_with_a_dash_takes_the_next_word_as_its_delimiter() {
+    judged_dynamic_unreadable("<<- EOF \"$X\" hi\nEOF");
+    judged_dynamic_unreadable("<<EOF \"$X\" hi\nEOF");
+    allowed_unreadable("cat <<- EOF\n\techo $X\n\tEOF");
+}
+
+// ---------------------------------------------------------------------------
+// The parsed path: `(( ))` is an arithmetic command, not a command name.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_arithmetic_command_is_not_a_dynamic_command_name() {
+    for text in [
+        "while (( SECONDS < end )); do :; done",
+        "(( i++ ))",
+        "(( x = $y + 1 ))",
+        "for (( i=0; i<3; i++ )); do echo $i; done",
+        "if (( n > 3 )); then echo big; fi",
+        "echo $(( 1 + 2 ))",
+    ] {
+        assert_allowed(text);
+    }
+}
+
+#[test]
+fn an_arithmetic_or_process_substitution_as_the_command_name_is_dynamic() {
+    for text in ["$(( 1 + 2 )) hi", "$((1 + 2))", "<(date) hi", ">(cat) hi"] {
+        assert_judged_dynamic(text);
+    }
+}
