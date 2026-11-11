@@ -629,6 +629,77 @@ fn deny_reason_names_the_rule() {
 }
 
 // ---------------------------------------------------------------------------
+// Fail closed (gate P1-1, P1-2): what the check cannot read, it denies.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_parse_error_with_a_home_token_is_denied() {
+    // tree-sitter wraps the whole input in an ERROR node, so no `command` node exists
+    // to visit. A home token (`~`, `$HOME`, `${HOME`, `/Users/x`, `/home/x`) in a text
+    // that does not parse is denied.
+    for cmd in [
+        "[ -d ~ ] && rm -rf ~",
+        "[[ -d ~ ]] && rm -rf ~",
+        "rm -rf \"${HOME\"",
+        "[ -d $HOME ] && rm -rf \"$HOME\"",
+        "[[ -d /Users/alice ]] && rm -rf /Users/alice",
+        "bash -c '[ -d ~ ] && rm -rf ~'",
+    ] {
+        assert_denied_everywhere(cmd);
+    }
+}
+
+#[test]
+fn a_parse_error_without_a_home_token_is_not_added() {
+    // No home token: this check adds nothing, so the verdict is main's.
+    for cmd in ["rm -rf build )", "[ -d build ] && rm -rf build", "rm -rf ./x fi"] {
+        assert_allowed(cmd);
+    }
+}
+
+#[test]
+fn undecodable_home_expansions_are_denied() {
+    // A `${HOME<operator>...}` word cannot be decoded and starts with the home folder.
+    for cmd in [
+        "rm -rf \"${HOME:?}\"",
+        "rm -rf \"${HOME:?}/\"",
+        "rm -rf ${HOME:?}",
+        "rm -rf \"${HOME%/*}\"",
+        "rm -rf \"${HOME%/*}/\"",
+        "rm -rf \"${HOME%/}\"",
+        "rm -rf \"${HOME%%/}\"",
+        "rm -rf \"${HOME#}\"",
+        "rm -rf \"${HOME:-/tmp/x}\"",
+        "rm -rf ${HOME/x/y}",
+        "rm -rf ${HOME:h}",
+        "rm -rf ${HOME:A}",
+        "rm -rf \"${HOME",
+        "rm -rf ${HOME:?}/build",
+        "bash -c 'rm -rf \"${HOME:?}\"'",
+        "sudo rm -rf \"${HOME:?}\"",
+        "rm -rf \"$(printf '%s' \"$HOME\")/\"",
+    ] {
+        assert_denied_everywhere(cmd);
+    }
+}
+
+#[test]
+fn names_that_only_start_with_home_stay_allowed() {
+    for cmd in [
+        "rm -rf ${HOMEDIR}",
+        "rm -rf \"${HOME_BACKUP}\"",
+        "rm -rf ${HOMES:?}",
+        "rm -rf ${HOME2%/*}",
+        "echo \"${HOME:?}\"",
+        "echo ${HOME:-x}",
+        "ls \"${HOME%/*}\"",
+        "rm -rf ~/proj/build",
+    ] {
+        assert_allowed(cmd);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // dd-disk-device: the nvme fix stays.
 // ---------------------------------------------------------------------------
 
