@@ -36,7 +36,7 @@ pub const CRITICAL_RULES: &[Rule] = &[
     Rule::new(
         "dd-disk-device",
         SafetyLevel::Critical,
-        r"\bdd\b.*\bof=/dev/(sd|nvme|hd|vd|xvd)[a-z]",
+        r"\bdd\b.*\bof=/dev/(sd|nvme|hd|vd|xvd)[a-z0-9]",
         "Writing directly to disk device",
     ),
     Rule::new(
