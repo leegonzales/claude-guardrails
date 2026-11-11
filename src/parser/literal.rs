@@ -34,6 +34,10 @@
 //! * a name that changes how words split or how commands are found (see
 //!   [`is_reserved`]);
 //! * a braced expansion with an operator (`${X:-d}`, `${#X}`, `${!X}`);
+//! * an unbraced `$NAME` of a known name directly followed by `:` or `[` (zsh
+//!   modifiers and subscripts: `$X:l`, `$X[1]`);
+//! * an expansion that creates a declaration (`export`, `unset`) the literal text did
+//!   not contain, such as `$K X=rm` with `K=export`;
 //! * a `$NAME` for a known name that the parser did not see as an expansion
 //!   (single quotes, backslash escapes, comments): the textual and parsed counts
 //!   must agree;
@@ -138,7 +142,15 @@ fn is_reserved(name: &str) -> bool {
             | "PIPESTATUS"
             | "DIRSTACK"
             | "MAPFILE"
+            // zsh: lower-case arrays tied to PATH, CDPATH and friends, and the
+            // commands zsh runs for a bare redirect.
+            | "path"
+            | "cdpath"
+            | "fpath"
+            | "NULLCMD"
+            | "READNULLCMD"
     ) || name.starts_with("BASH")
+        || name.starts_with("ZSH")
         || name.starts_with("COMP")
         || name.starts_with("EPOCH")
         || name.starts_with("HIST")
@@ -157,6 +169,14 @@ pub fn resolve(source: &str) -> Option<String> {
     }
     let expanded = apply(source, edits);
 
+    // Substitution only adds text. A command name that expanded to `export` or
+    // `unset` (`$K X=rm`) is a declaration the walk above never saw, so a later
+    // `$X` kept a stale value. The literal text and the expanded text must hold the
+    // same declarations.
+    if count_declarations(source)? != count_declarations(&expanded)? {
+        return None;
+    }
+
     // The expanded text must be understood by the same rules, with nothing left to
     // substitute and every command named by one plain word.
     let again = plan(&expanded)?;
@@ -167,6 +187,19 @@ pub fn resolve(source: &str) -> Option<String> {
         return None;
     }
     Some(expanded)
+}
+
+/// Number of `declaration_command` and `unset_command` nodes anywhere in `source`.
+fn count_declarations(source: &str) -> Option<usize> {
+    fn walk(node: &Node) -> usize {
+        let own = usize::from(matches!(
+            node.kind(),
+            "declaration_command" | "unset_command"
+        ));
+        let mut cursor = node.walk();
+        own + node.children(&mut cursor).map(|c| walk(&c)).sum::<usize>()
+    }
+    Some(walk(&parse(source)?.root_node()))
 }
 
 fn parse(source: &str) -> Option<tree_sitter::Tree> {
@@ -399,6 +432,18 @@ fn reference(node: &Node, ctx: &mut Use, in_redirect: bool, braced: bool) -> Opt
                 if in_redirect && value.contains(' ') {
                     return None;
                 }
+                // zsh applies history modifiers (`$X:l`, `$X:s/a/b/`, `$X:h`) and
+                // subscripts (`$X[1]`) straight after an unbraced name, in or out of
+                // double quotes, so the text after the reference would not be what
+                // runs. `${X}:l` is a plain literal in zsh and stays allowed.
+                if !braced
+                    && matches!(
+                        ctx.source.as_bytes().get(node.end_byte()),
+                        Some(b':' | b'[')
+                    )
+                {
+                    return None;
+                }
                 ctx.edits.push(Edit {
                     start: node.start_byte(),
                     end: node.end_byte(),
@@ -521,6 +566,11 @@ mod tests {
             "X='a b\nc'; $X",
             "X=echo; read X; $X",
             "X=echo; f() { :; }; $X",
+            "K=export; X=echo; $K X=rm; $X -rf /",
+            "X=RM; $X:l -rf /",
+            "X=/; Y=rm; $Y -rf $X[1]",
+            "path=/tmp/e; X=ls; $X",
+            "ZSH_NAME=a; X=ls; $X",
         ] {
             assert_eq!(resolve(cmd), None, "should refuse {cmd:?}");
         }

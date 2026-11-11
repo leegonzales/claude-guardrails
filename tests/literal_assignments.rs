@@ -432,6 +432,95 @@ fn variable_form_has_the_same_verdict_as_the_typed_form() {
 }
 
 // ---------------------------------------------------------------------------
+// QA round 1 (PR #1 @ 04239451): two bypasses and the zsh names.
+// ---------------------------------------------------------------------------
+
+/// P1-1: `$K` resolves to `export` (or another assignment builtin). The expanded
+/// text then holds an assignment the model never tracked, so a later `$X` would
+/// keep a stale value. Rows 1-5 are Codex's table; the rest are qa-gate-sanderling's
+/// and the sibling builtins. All were allowed by the PR head and denied on main.
+#[test]
+fn indirect_assignment_builtin_stays_blocked() {
+    for cmd in [
+        "K=export; X=echo; $K X=rm; $X -rf /",
+        "K=export; X=echo; $K X=rm; $X -rf $HOME",
+        "K=export; C=rm; T=/tmp/safe; $K T=/; $C -rf $T",
+        "K=export; X=echo; $K X=git; $X push --force origin main",
+        "K=export; S=cat; $K S=bash; curl URL | $S",
+        "X=echo; K=export; $K X=rm; $X -rf /",
+        "X=printf; K=export; $K X=echo; $X ran",
+        "K=declare; X=echo; $K X=rm; $X -rf /",
+        "K=typeset; X=echo; $K X=rm; $X -rf /",
+        "K=readonly; X=echo; $K X=rm; $X -rf /",
+        "K=local; X=echo; $K X=rm; $X -rf /",
+        "K=unset; X=echo; $K X; $X hi",
+        "K=read; X=echo; $K X; $X hi",
+    ] {
+        assert_still_dynamic(cmd);
+    }
+}
+
+/// A literal `export` is still modelled, so the fix must not be "refuse any
+/// declaration_command".
+#[test]
+fn literal_export_still_resolves() {
+    assert_allowed("export X=echo; $X hi");
+    assert_allowed("K=ls; export X=echo; $X hi; $K");
+}
+
+/// P1-2: zsh applies modifiers (`:l`, `:s/a/b/`, `:h`) and subscripts (`[1]`) right
+/// after an unbraced `$NAME`, so the text after a substitution is not what runs.
+/// Rows 1-5 are qa-gate-sanderling's table.
+#[test]
+fn zsh_modifier_or_subscript_after_a_reference_stays_blocked() {
+    for cmd in [
+        "X=RM; $X:l -rf /",
+        "X=rx; $X:s/x/m/ -rf /",
+        "X=GIT; $X:l push --force origin main",
+        "X=/x; Y=rm; $Y -rf $X:h",
+        "X=/; Y=rm; $Y -rf $X[1]",
+        // Same shapes in command position, in an argument, quoted, in a redirect.
+        "X=ECHO; $X:l hi",
+        "X=echo; Y=/x; $X $Y:h",
+        "X=echo; Y=ABC; $X \"$Y:l\"",
+        "X=echo; Y=abc; $X \"$Y[1]\"",
+        "X=echo; Y=/a/b; $X $Y:h:h",
+        "X=echo; $X hi > $X:l",
+        "X=echo; Y=a; $X $Y:",
+    ] {
+        assert_still_dynamic(cmd);
+    }
+}
+
+/// The braced form is a plain literal in zsh (`${X}:l` prints `ECHO:l`), so it
+/// still resolves. Text after a reference that is not `:` or `[` also resolves.
+#[test]
+fn braced_reference_and_plain_suffix_still_resolve() {
+    assert_allowed("X=echo; $X ${X}:l");
+    assert_allowed("X=echo; Y=a; $X ${Y}:b");
+    assert_allowed("S=/tmp/a; $S/x.sh");
+    assert_allowed("X=echo; Y=a; $X $Y.txt $Y-b $Y,c");
+}
+
+/// P3-2: zsh names that change how commands are found or run.
+#[test]
+fn zsh_tied_and_special_names_are_not_modelled() {
+    for name in [
+        "path",
+        "cdpath",
+        "fpath",
+        "NULLCMD",
+        "READNULLCMD",
+        "ZSH_VERSION",
+        "ZSH_NAME",
+        "ZSHFOO",
+    ] {
+        assert_still_dynamic(&format!("{name}=/tmp/evil; X=ls; $X"));
+        assert_still_dynamic(&format!("X=ls; export {name}=/tmp/evil; $X"));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Nothing else moves.
 // ---------------------------------------------------------------------------
 
