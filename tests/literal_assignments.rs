@@ -707,6 +707,72 @@ fn name_that_changes_word_splitting_or_lookup_stays_blocked() {
 }
 
 // ---------------------------------------------------------------------------
+// Round-3 fix (gate P2-1): a typed `{ } [ ] ~ < >` in the same word as a reference.
+// The shell expands typed text (braces, ranges, tilde, redirect digits) more than it
+// expands a substituted value, so the expanded text would mean more than what runs.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn typed_brace_next_to_a_reference_keeps_the_block() {
+    assert_all_still_dynamic(&[
+        "X=a,b; B=/bin/echo; $B {$X}",
+        "X=a,b; B=/bin/echo; $B {$X,c}",
+        "X=a,b; B=/bin/echo; $B {c,$X}",
+        "X=a,b; B=/bin/echo; $B {c,$X,d}",
+        "X=a,b; B=/bin/echo; $B x{$X}y",
+        "X=/,x; B=/bin/rm; $B -rf {$X}",
+        "X=a,b; B=/bin/echo; $B \"{$X}\"",
+    ]);
+}
+
+#[test]
+fn typed_bracket_next_to_a_reference_keeps_the_block() {
+    assert_all_still_dynamic(&[
+        "X=a-z; B=/bin/echo; $B [$X]",
+        "X=a-z; B=/bin/echo; $B [$X",
+        "X=a; B=/bin/echo; $B x[$X]",
+        "X=a; B=/bin/echo; $B $X]",
+    ]);
+}
+
+#[test]
+fn typed_tilde_next_to_a_reference_keeps_the_block() {
+    assert_all_still_dynamic(&[
+        "X=/; B=/bin/echo; $B ~$X",
+        "X=a=; B=/bin/echo; $B $X~",
+        "X=a; B=/bin/echo; $B a=~$X",
+        "X=a; B=/bin/echo; $B $X/~x",
+    ]);
+}
+
+#[test]
+fn typed_redirect_next_to_a_reference_keeps_the_block() {
+    assert_all_still_dynamic(&[
+        "X=0; B=/bin/kill; $B -9 $X>/dev/null",
+        "X=0; B=/bin/echo; $B $X<a",
+        "X=0; B=/bin/echo; $B $X>>log",
+        "X=a; B=/bin/echo; $B >$X",
+        "X=a; B=/bin/echo; $B 2>$X",
+        "X=a; B=/bin/echo; $B <$X",
+        "X=echo; $X>/dev/null hi",
+        "S=/tmp/a; $S/x.sh>out",
+    ]);
+}
+
+#[test]
+fn a_reference_set_apart_by_spaces_or_operators_is_still_resolved() {
+    // The refusal is for the same word only: these keep their verdicts.
+    assert_allowed("B=/abs/path/tool; $B args");
+    assert_allowed("X=a,b; B=/bin/echo; $B $X");
+    assert_allowed("X=a; B=/bin/echo; $B $X > out.log");
+    assert_allowed("X=a; B=/bin/echo; $B {c,d} $X");
+    assert_allowed("X=a; B=/bin/echo; $B ~ $X");
+    assert_allowed("X=a; B=/bin/echo; $B [ab] $X");
+    assert_allowed("X=a; B=/bin/echo; $B $X; ls");
+    assert_allowed("X=a; B=/bin/echo; $B $X | cat");
+}
+
+// ---------------------------------------------------------------------------
 // Nothing else moves.
 // ---------------------------------------------------------------------------
 
