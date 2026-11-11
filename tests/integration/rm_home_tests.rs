@@ -652,7 +652,11 @@ fn a_parse_error_with_a_home_token_is_denied() {
 #[test]
 fn a_parse_error_without_a_home_token_is_not_added() {
     // No home token: this check adds nothing, so the verdict is main's.
-    for cmd in ["rm -rf build )", "[ -d build ] && rm -rf build", "rm -rf ./x fi"] {
+    for cmd in [
+        "rm -rf build )",
+        "[ -d build ] && rm -rf build",
+        "rm -rf ./x fi",
+    ] {
         assert_allowed(cmd);
     }
 }

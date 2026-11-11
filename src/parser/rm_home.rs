@@ -1485,7 +1485,13 @@ mod tests {
 
     #[test]
     fn home_with_an_operator_is_home_then_unknown() {
-        for text in ["${HOME:?}", "${HOME%/*}", "${HOME:-x}", "${HOME:h}", "${HOME"] {
+        for text in [
+            "${HOME:?}",
+            "${HOME%/*}",
+            "${HOME:-x}",
+            "${HOME:h}",
+            "${HOME",
+        ] {
             let w = lex(text);
             assert_eq!(w[0], vec![Piece::Home, Piece::Opaque], "{text}");
         }
