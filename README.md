@@ -139,22 +139,28 @@ The engine catches common bypass attempts:
 ### Literal assignments in the same command
 
 A variable in command position is blocked because it hides the command. If the same
-command assigns it a plain literal first, nothing is hidden, so the guard substitutes the
-literal and checks the expanded command against every rule as if it had been typed:
+command assigns it a plain literal first, and everything else in the command is
+understood, the guard substitutes the literal and checks the expanded command against
+every rule as if it had been typed. The check is an allowlist: it resolves only what it
+can prove is what the shell runs, and anything else keeps the block.
 
 | Command | Result |
 |---------|--------|
 | `S=/tmp/a; $S/x.sh` | allowed (expands to `/tmp/a/x.sh`) |
-| `X=r; Y=m; $X$Y -rf /` | expands to `rm -rf /`, denied by `rm-root` |
+| `X=echo; $X hi` | allowed |
+| `X=git; $X push --force origin main` | expands, denied by `git-force-main` |
+| `X=rm; $X -rf /tmp/x` | blocked: `rm` is not on the safe list |
+| `X=echo; noglob export X=rm; $X -rf /` | blocked: `noglob` is not on the safe list |
+| `P="python3 -I /p/plan_cli.py"; $P story` | blocked: a space is not in the literal class |
 | `S=$(cmd); $S` | blocked: the value is not a literal |
-| `X=a \|\| X=echo; $X` | blocked: the assignment may not run |
 
-A literal is letters, digits and `_ . / : @ % + , ~ -` or a space, set by a bare
-`NAME=value` or `export NAME=value` statement joined by `;` or a newline. Anything the
-guard does not fully model stays blocked: substitutions, globs, quotes inside a value,
-prefix assignments, `unset`, `read`, `eval` and other builtins that change variables,
-subshells, functions, `${X:-d}`-style expansions, and names such as `IFS` and `PATH`. See
-`src/parser/literal.rs` for the full list.
+Every command in the input must be a plain `NAME=literal` assignment, a command on the
+safe list (`cat`, `echo`, `git`, `ls`, `python3`), or a bare `$NAME` that resolves to a
+safe command or an absolute path (`$S/x.sh` counts). A literal is `[A-Za-z0-9_./:@%+=,-]+`,
+bare or in plain quotes. The whole input is refused if it holds a backslash, a backtick,
+`#`, a newline, any `${...}`, `$(...)`, or a `$NAME` followed directly by `:`, `[`, `(` or
+`{`, or if it assigns a special parameter of bash or zsh (`IFS`, `PATH`, `path`, ...).
+`src/parser/literal.rs` has the full rule and the reason for every character.
 
 ## Configuration
 
