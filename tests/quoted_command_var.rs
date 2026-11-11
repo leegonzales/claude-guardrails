@@ -172,3 +172,158 @@ fn the_fallback_keeps_static_command_words_and_arguments_allowed() {
     assert_allowed("); x=$(date); echo done");
     assert_allowed("); echo $(( 1 + 2 ))");
 }
+
+// ---------------------------------------------------------------------------
+// Round 2: more spellings of the command word, more command positions in the
+// fallback, and the inner command of a substitution.
+// ---------------------------------------------------------------------------
+
+/// Command words that start with a quoted or literal part. They are the same command
+/// word as the bare variable.
+const MIXED_WORDS: &[&str] = &[
+    "\"\"$X", "''$X", "\"a\"$X", "x\"$X\"", "'a$X'", "\"a$X\"", "\"$X\"y", "$X\"\"", "x${X}",
+];
+
+/// Text that does not parse, so that the fallback runs on what follows it.
+const FALLBACK_LEAD: &str = ")";
+
+#[test]
+fn the_fallback_blocks_a_mixed_command_word_at_every_position() {
+    for word in MIXED_WORDS {
+        for lead in [
+            "; ",
+            "&& ",
+            "|| ",
+            "| ",
+            "\n",
+            "; ! ",
+            "; A=1 ",
+            "; >f ",
+            "; > f ",
+            "; 2>/dev/null ",
+            "; A=1 B=2 >f ",
+        ] {
+            assert_blocked_by(
+                &format!("{FALLBACK_LEAD}{lead}{word} hi"),
+                "variable-command",
+            );
+        }
+        assert_blocked_by(&format!("{word} hi {FALLBACK_LEAD}"), "variable-command");
+    }
+}
+
+#[test]
+fn the_fallback_blocks_a_variable_after_a_prefix_in_every_quoting() {
+    for form in FORMS {
+        for lead in ["! ", "A=1 ", ">f ", "> f ", "2>/dev/null ", "A=1 >f ! "] {
+            assert_blocked_by(
+                &format!("{FALLBACK_LEAD}; {lead}{form} hi"),
+                "variable-command",
+            );
+        }
+    }
+}
+
+#[test]
+fn the_fallback_blocks_a_variable_in_a_case_arm_and_a_function_body() {
+    for form in FORMS {
+        assert_blocked_by(
+            &format!("{FALLBACK_LEAD}; case x in x) {form} hi ;; esac"),
+            "variable-command",
+        );
+        assert_blocked_by(
+            &format!("{FALLBACK_LEAD}; case x in (x) {form} hi ;; esac"),
+            "variable-command",
+        );
+        assert_blocked_by(
+            &format!("{FALLBACK_LEAD}; f() {form} hi"),
+            "variable-command",
+        );
+    }
+}
+
+#[test]
+fn the_fallback_blocks_a_variable_at_the_start_of_a_substitution() {
+    for form in FORMS {
+        assert_blocked_by(
+            &format!("{FALLBACK_LEAD}; echo $({form} hi)"),
+            "variable-command",
+        );
+        assert_blocked_by(
+            &format!("{FALLBACK_LEAD}; echo \"$({form} hi)\""),
+            "variable-command",
+        );
+        assert_blocked_by(
+            &format!("{FALLBACK_LEAD}; echo `{form} hi`"),
+            "variable-command",
+        );
+    }
+}
+
+#[test]
+fn the_fallback_keeps_a_quoted_separator_or_keyword_in_an_argument_allowed() {
+    // A static quoted command name, and a keyword or separator inside a quoted argument:
+    // none of them is a command boundary.
+    for text in [
+        "); \"ls\" '; $X'",
+        "); \"ls\" 'if $X'",
+        "); \"ls\" \"; $X\"",
+        "); 'ls' \"then $X\"",
+        "); ls 'a && $X'",
+        "); echo \"| $X\"",
+        "); echo 'a\n$X'",
+        "); ls # ; $X",
+        "); echo hi # then $X",
+        "); echo hi > f $X",
+        "); echo hi 2>&1 $X",
+        "); echo hi >f \"$X\"",
+        "); A=1 ls $X",
+        "); ls -la $(date) $X",
+        "); echo ${X:-a} $(( $X + 1 ))",
+    ] {
+        assert_allowed(text);
+    }
+}
+
+#[test]
+fn a_single_quoted_part_with_a_dollar_in_a_command_word_is_blocked() {
+    // A concatenated command word is judged by every part, quoted or not.
+    for word in ["'$X'\"\"", "x'$X'", "\"a\"'$X'", "'a$X'b", "'`id`'\"\""] {
+        assert_blocked_by(&format!("{word} hi"), "dynamic-command");
+        assert_blocked_by(&format!("echo start; {word} hi"), "dynamic-command");
+    }
+    for word in ["'ls'\"\"", "l'ls'", "'a'\"b\""] {
+        assert_allowed(&format!("{word} -la"));
+    }
+}
+
+#[test]
+fn the_inner_command_of_a_substitution_is_checked_as_a_command() {
+    for form in FORMS {
+        assert_blocked_by(&format!("echo $({form} hi)"), "dynamic-command");
+        assert_blocked_by(&format!("echo \"$({form} hi)\""), "dynamic-command");
+        assert_blocked_by(&format!("echo `{form} hi`"), "dynamic-command");
+        assert_blocked_by(&format!("ls -la $(echo $({form} hi))"), "dynamic-command");
+    }
+    for text in [
+        "echo $(date)",
+        "echo \"$(ls -la)\"",
+        "echo `date`",
+        "echo $(ls \"$X\")",
+        "echo $(\"ls\" -la)",
+    ] {
+        assert_allowed(text);
+    }
+}
+
+#[test]
+fn a_quoted_static_name_with_a_separator_in_an_argument_stays_allowed() {
+    for text in [
+        "\"ls\" '; $X'",
+        "\"ls\" 'if $X'",
+        "ls \"| $X\"",
+        "echo 'a && $X' ; ls",
+    ] {
+        assert_allowed(text);
+    }
+}
