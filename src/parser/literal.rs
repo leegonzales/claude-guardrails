@@ -56,9 +56,35 @@ use tree_sitter::{Node, Parser};
 /// name resolves, or run later statements somewhere this model cannot see. A command
 /// named by any of these makes the whole command unresolvable.
 const MUTATORS: &[&str] = &[
-    ".", "alias", "builtin", "command", "coproc", "declare", "enable", "eval", "exec", "export",
-    "getopts", "hash", "let", "local", "mapfile", "printf", "read", "readarray", "readonly",
-    "set", "shift", "shopt", "source", "time", "trap", "typeset", "unalias", "unset", "wait",
+    ".",
+    "alias",
+    "builtin",
+    "command",
+    "coproc",
+    "declare",
+    "enable",
+    "eval",
+    "exec",
+    "export",
+    "getopts",
+    "hash",
+    "let",
+    "local",
+    "mapfile",
+    "printf",
+    "read",
+    "readarray",
+    "readonly",
+    "set",
+    "shift",
+    "shopt",
+    "source",
+    "time",
+    "trap",
+    "typeset",
+    "unalias",
+    "unset",
+    "wait",
 ];
 
 /// A reference to `$NAME` or `${NAME` anywhere in the text, quotes and escapes
@@ -77,7 +103,10 @@ struct Edit {
 /// so the text is the same words before and after expansion.
 fn is_value_char(c: char) -> bool {
     c.is_ascii_alphanumeric()
-        || matches!(c, '_' | '.' | '/' | ':' | '@' | '%' | '+' | ',' | '~' | '-' | ' ')
+        || matches!(
+            c,
+            '_' | '.' | '/' | ':' | '@' | '%' | '+' | ',' | '~' | '-' | ' '
+        )
 }
 
 /// Names whose value is not a plain stored string, or that change how the shell
@@ -293,9 +322,19 @@ fn walk_use(node: &Node, ctx: &mut Use, in_redirect: bool) -> Option<()> {
             check_command_name(node, ctx.source)?;
             walk_children(node, ctx, in_redirect)
         }
-        "pipeline" | "list" | "redirected_statement" | "command_name" | "concatenation"
-        | "string" | "raw_string" | "string_content" | "word" | "number" | "variable_name"
-        | "special_variable_name" | "file_descriptor" => walk_children(node, ctx, in_redirect),
+        "pipeline"
+        | "list"
+        | "redirected_statement"
+        | "command_name"
+        | "concatenation"
+        | "string"
+        | "raw_string"
+        | "string_content"
+        | "word"
+        | "number"
+        | "variable_name"
+        | "special_variable_name"
+        | "file_descriptor" => walk_children(node, ctx, in_redirect),
         "file_redirect" => walk_children(node, ctx, true),
         "simple_expansion" => reference(node, ctx, in_redirect, false),
         "expansion" => reference(node, ctx, in_redirect, true),
@@ -399,9 +438,7 @@ fn visit_commands(node: &Node, source: &str, ok: &mut bool) {
                     (Some(first), None) if first.kind() == "word" || first.kind() == "number" => {
                         let text = first.utf8_text(source.as_bytes()).unwrap_or("");
                         !text.is_empty()
-                            && text
-                                .chars()
-                                .all(|ch| is_value_char(ch) && ch != ' ')
+                            && text.chars().all(|ch| is_value_char(ch) && ch != ' ')
                             && !MUTATORS.contains(&text)
                     }
                     _ => false,
@@ -495,8 +532,8 @@ mod tests {
             assert!(ok.chars().all(is_value_char), "{ok:?}");
         }
         for bad in [
-            "$", "`", "\\", "'", "\"", "*", "?", "[", "]", "{", "}", "(", ")", "<", ">", "|",
-            "&", ";", "=", "#", "!", "\n", "\t", "^",
+            "$", "`", "\\", "'", "\"", "*", "?", "[", "]", "{", "}", "(", ")", "<", ">", "|", "&",
+            ";", "=", "#", "!", "\n", "\t", "^",
         ] {
             assert!(!bad.chars().all(is_value_char), "{bad:?}");
         }
