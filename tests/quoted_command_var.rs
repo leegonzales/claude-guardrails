@@ -279,7 +279,7 @@ fn the_fallback_keeps_a_quoted_separator_or_keyword_in_an_argument_allowed() {
         "); echo hi >f \"$X\"",
         "); A=1 ls $X",
         "); ls -la $(date) $X",
-        "); echo ${X:-a} $(( $X + 1 ))",
+        "); echo ${X:-a} $((1 + 2))",
     ] {
         assert_allowed(text);
     }

@@ -249,6 +249,11 @@ fn extract_command(node: &Node, source: &str) -> Option<NormalizedCommand> {
     })
 }
 
+/// The node is directly followed by a redirection operator, as in `0<f`.
+fn touches_redirection(node: &Node, source: &str) -> bool {
+    matches!(source.as_bytes().get(node.end_byte()), Some(b'<' | b'>'))
+}
+
 /// Normalize a command name, handling quote obfuscation and detecting dynamic names
 /// Returns (normalized_name, is_dynamic)
 fn normalize_command_name(node: &Node, source: &str) -> (String, bool) {
@@ -267,6 +272,15 @@ fn normalize_command_name(node: &Node, source: &str) -> (String, bool) {
                 let text = child.utf8_text(source.as_bytes()).unwrap_or("$(...)");
                 return (text.to_string(), true);
             }
+            // An arithmetic or process substitution as the command name is dynamic too.
+            // A bare `(( ... ))` is an arithmetic command, not a substitution.
+            "arithmetic_expansion" | "process_substitution" => {
+                let text = child.utf8_text(source.as_bytes()).unwrap_or("$((...))");
+                if text.starts_with("((") {
+                    return (text.to_string(), false);
+                }
+                return (text.to_string(), true);
+            }
             // Concatenation (like ba'sh') - normalize it
             "concatenation" => {
                 let normalized = normalize_concatenation(&child, source);
@@ -278,6 +292,14 @@ fn normalize_command_name(node: &Node, source: &str) -> (String, bool) {
             "word" => {
                 let text = child.utf8_text(source.as_bytes()).unwrap_or("");
                 return (text.to_string(), false);
+            }
+            // The parser reads `0<f $X hi` as the command `0` with a redirection and
+            // takes the real command for a redirection target. A number is not a command
+            // name there, so it gets the dynamic verdict. (It also reads the `$2` of
+            // `d=$1/$2` as a name; no redirection touches that one.)
+            "number" if touches_redirection(&child, source) => {
+                let text = child.utf8_text(source.as_bytes()).unwrap_or("0");
+                return (text.to_string(), true);
             }
             // Quoted string - remove quotes. A quoted variable or substitution is the
             // same command word as the bare one, so it gets the same verdict.
@@ -344,7 +366,11 @@ fn normalize_concatenation(node: &Node, source: &str) -> String {
 /// quoted form of the same thing, so it gets the same verdict as the bare form.
 fn has_dynamic_parts(node: &Node, source: &str) -> bool {
     match node.kind() {
-        "simple_expansion" | "expansion" | "command_substitution" => true,
+        "simple_expansion"
+        | "expansion"
+        | "command_substitution"
+        | "arithmetic_expansion"
+        | "process_substitution" => true,
         "raw_string" => {
             let text = node.utf8_text(source.as_bytes()).unwrap_or("");
             text.contains('$') || text.contains('`')
