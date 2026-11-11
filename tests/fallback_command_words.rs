@@ -418,6 +418,8 @@ fn a_numbered_redirection_before_a_variable_command_is_judged() {
         // The parser also reads the `$2` here as a command name; it is not one.
         "d=$1/$2",
         "for s in a; do set -- $s; d=$1/$2; echo $d; done",
+        "R=$S/rigs/$4 ls 2>&1 | head",
+        "R=$S/rigs/$4 ls >f",
     ] {
         assert_allowed(text);
     }
