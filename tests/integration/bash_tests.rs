@@ -221,7 +221,7 @@ fn test_cargo_commands_allowed() {
 #[test]
 fn test_echo_safe_allowed() {
     assert!(check_bash("echo hello"));
-    assert!(check_bash("echo $HOME"));  // Allowed because not SECRET/KEY/TOKEN
+    assert!(check_bash("echo $HOME")); // Allowed because not SECRET/KEY/TOKEN
     assert!(check_bash("echo $PWD"));
 }
 
