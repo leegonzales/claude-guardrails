@@ -197,9 +197,8 @@ fn check_command_fallback(
 /// The `rm-home` AST check: `rm` of the home directory, above it, or a glob over its
 /// contents, found in the parsed command (see `parser::rm_home`).
 fn check_rm_home_ast(command: &str) -> Option<Decision> {
-    rm_home::denies(command).then(|| {
-        Decision::deny("rm-home", "Attempting to delete home directory")
-    })
+    rm_home::denies(command)
+        .then(|| Decision::deny("rm-home", "Attempting to delete home directory"))
 }
 
 /// Check a command against the dangerous rules

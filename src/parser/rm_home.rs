@@ -381,15 +381,22 @@ impl Lexer {
                     }
                     self.i += 1;
                 }
+                let terminated = self.i < self.chars.len();
                 let inner: String = self.chars[start..self.i.min(self.chars.len())]
                     .iter()
                     .collect();
                 self.i += 1;
-                self.cur.push(if inner == "HOME" {
-                    Piece::Home
+                if inner == "HOME" && terminated {
+                    self.cur.push(Piece::Home);
+                } else if names_home_with_operator(&inner) {
+                    // `${HOME:?}`, `${HOME%/*}`, `${HOME:-x}`, `${HOME:h}` or an
+                    // unterminated `${HOME`: it starts with the home folder and cannot
+                    // be decoded, so it is the home folder followed by an unknown tail.
+                    self.cur.push(Piece::Home);
+                    self.cur.push(Piece::Opaque);
                 } else {
-                    Piece::Opaque
-                });
+                    self.cur.push(Piece::Opaque);
+                }
             }
             Some('(') => {
                 if self.peek(2) == Some('(') {
@@ -772,6 +779,24 @@ fn segments(pieces: &[Piece]) -> Vec<Word> {
     segs
 }
 
+/// The text inside `${...}` is `HOME` followed by something that is not a name
+/// character: an operator (`:?`, `%`, `#`, `/`, `:-`, `:h`) or nothing at all.
+fn names_home_with_operator(inner: &str) -> bool {
+    inner.strip_prefix("HOME").is_some_and(|rest| {
+        !rest
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
+/// A home token anywhere in the text: `~`, `$HOME`, `${HOME`, `/Users/...`, `/home/...`.
+fn has_home_token(source: &str) -> bool {
+    ["~", "$HOME", "${HOME", "/Users/", "/home/"]
+        .iter()
+        .any(|t| source.contains(t))
+}
+
 /// Decide one alternative of one operand. `true` means the path is the home folder,
 /// above it, home plus a glob that covers its contents, or an undecodable word that
 /// starts with a home prefix.
@@ -857,10 +882,13 @@ fn normalise(segs: &[Word]) -> Vec<Word> {
 /// All alternatives of one operand. A word with too many alternatives is decided by its
 /// start: the part before the first brace, then an undecodable tail.
 fn operand_denies(word: &Word, depth: usize) -> bool {
-    // A whole-word command substitution: the output may be the home folder.
-    if let [Piece::Subst(inner)] = word.as_slice() {
-        if subst_names_home(inner, depth) {
-            return true;
+    // A command substitution in the word, whole or with a prefix or suffix
+    // (`"$(printf '%s' "$HOME")/"`): the output may be the home folder.
+    for piece in word {
+        if let Piece::Subst(inner) = piece {
+            if subst_names_home(inner, depth) {
+                return true;
+            }
         }
     }
     let mut budget = MAX_ALTERNATIVES;
@@ -929,6 +957,11 @@ fn scan(source: &str, depth: usize) -> bool {
     let Some(tree) = parse(source) else {
         return false;
     };
+    // Fail closed: a text that does not parse may hide an `rm` inside an ERROR node
+    // (`[ -d ~ ] && rm -rf ~`). With a home token in it, deny.
+    if tree.root_node().has_error() && has_home_token(source) {
+        return true;
+    }
     let mut hit = false;
     visit(&tree.root_node(), &mut |node| {
         if hit {
@@ -1448,6 +1481,26 @@ mod tests {
         ] {
             assert!(!denies(cmd), "{cmd}");
         }
+    }
+
+    #[test]
+    fn home_with_an_operator_is_home_then_unknown() {
+        for text in ["${HOME:?}", "${HOME%/*}", "${HOME:-x}", "${HOME:h}", "${HOME"] {
+            let w = lex(text);
+            assert_eq!(w[0], vec![Piece::Home, Piece::Opaque], "{text}");
+        }
+        assert_eq!(lex("${HOME}")[0], vec![Piece::Home]);
+        for text in ["${HOMEDIR}", "${HOME_X:?}", "${HOME2%/*}"] {
+            assert_eq!(lex(text)[0], vec![Piece::Opaque], "{text}");
+        }
+    }
+
+    #[test]
+    fn a_parse_error_with_a_home_token_is_denied() {
+        assert!(denies("[ -d ~ ] && rm -rf build"));
+        assert!(!denies("[ -d build ] && rm -rf build"));
+        assert!(has_home_token("x /home/alice"));
+        assert!(!has_home_token("echo build /tmp"));
     }
 
     #[test]
