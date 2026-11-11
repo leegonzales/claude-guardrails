@@ -187,6 +187,12 @@ fn collect_commands(
                 }
                 commands.push(cmd);
             }
+            // A substitution inside the command (`$( )`, backticks, in the name or in an
+            // argument) holds commands of its own. Each one is checked as a command.
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                collect_commands(&child, source, commands, has_dynamic);
+            }
         }
         _ => {
             // Recurse into children
@@ -265,7 +271,7 @@ fn normalize_command_name(node: &Node, source: &str) -> (String, bool) {
             "concatenation" => {
                 let normalized = normalize_concatenation(&child, source);
                 // Check if any part of the concatenation is dynamic
-                let is_dynamic = has_dynamic_parts(&child);
+                let is_dynamic = has_dynamic_parts(&child, source);
                 return (normalized, is_dynamic);
             }
             // Simple word
@@ -277,7 +283,7 @@ fn normalize_command_name(node: &Node, source: &str) -> (String, bool) {
             // same command word as the bare one, so it gets the same verdict.
             "string" => {
                 let text = child.utf8_text(source.as_bytes()).unwrap_or("");
-                return (strip_quotes(text), has_dynamic_parts(&child));
+                return (strip_quotes(text), has_dynamic_parts(&child, source));
             }
             // A single-quoted word is not expanded by the shell, but a `$` or a backtick
             // in a command word is the quoted form of the same thing: same verdict.
@@ -333,14 +339,20 @@ fn normalize_concatenation(node: &Node, source: &str) -> String {
     result
 }
 
-/// Check if a node contains dynamic parts (variables, command substitution)
-fn has_dynamic_parts(node: &Node) -> bool {
+/// Check if a node contains dynamic parts (variables, command substitution). A
+/// single-quoted part holding `$` or a backtick counts too: in a command word it is the
+/// quoted form of the same thing, so it gets the same verdict as the bare form.
+fn has_dynamic_parts(node: &Node, source: &str) -> bool {
     match node.kind() {
         "simple_expansion" | "expansion" | "command_substitution" => true,
+        "raw_string" => {
+            let text = node.utf8_text(source.as_bytes()).unwrap_or("");
+            text.contains('$') || text.contains('`')
+        }
         _ => {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                if has_dynamic_parts(&child) {
+                if has_dynamic_parts(&child, source) {
                     return true;
                 }
             }

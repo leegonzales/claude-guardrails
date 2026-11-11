@@ -3,6 +3,7 @@
 //! Provides shell tokenization, wrapper command detection, and AST-based analysis.
 
 pub mod ast;
+pub mod command_words;
 pub mod rm_home;
 pub mod shell;
 pub mod wrapper;

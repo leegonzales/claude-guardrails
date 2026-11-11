@@ -6,31 +6,18 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 
 /// Check if a command contains variable-based command execution
-/// Detects: $cmd, ${cmd}, $(cmd), `cmd`, bare or quoted ("$cmd", '$cmd', "${cmd}"),
-/// at the start of the input and at every later command position (after `;`, `&`, `|`,
-/// a newline, `(`, `{`, or a keyword such as `then`, `do`, `else`, `if`, `while`).
+/// Detects: $cmd, ${cmd}, $(cmd), `cmd`, bare or quoted ("$cmd", '$cmd', "${cmd}", `""$cmd`,
+/// `x"$cmd"`), at the start of the input and at every later command position (after
+/// `;`, `&`, `|`, a newline, `(`, `)`, `!`, a leading assignment or redirection, the
+/// start of a substitution, or a keyword such as `then`, `do`, `else`, `if`, `while`).
+/// A quoted separator or keyword inside an argument is not a command position.
 pub fn has_variable_execution(command: &str) -> bool {
-    static VARIABLE_EXEC_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
-        // A command position: the start of the input, an operator that starts a new
-        // command, a group, or a keyword that is followed by a command. A `(` that
-        // follows `$` or `(` is arithmetic or a substitution, not a group.
-        let position = r"(?:^|[;&|\n{]|(?:^|[^$(])\(|\b(?:then|do|else|elif|if|while|until)\b)\s*";
-        // A variable or substitution as the first part of the command word, optionally
-        // inside a quote.
-        let word = r#"["']?(?:\$\w|\$\{|\$\(|`)"#;
-        vec![
-            Regex::new(&format!("{position}{word}")).unwrap(),
-            // eval with variable
-            Regex::new(r"\beval\s+.*\$").unwrap(),
-        ]
+    static EVAL_PATTERN: Lazy<Regex> = Lazy::new(|| {
+        // eval with variable
+        Regex::new(r"\beval\s+.*\$").unwrap()
     });
 
-    for pattern in VARIABLE_EXEC_PATTERNS.iter() {
-        if pattern.is_match(command) {
-            return true;
-        }
-    }
-    false
+    super::command_words::has_dynamic_command_word(command) || EVAL_PATTERN.is_match(command)
 }
 
 /// Check if a command has dangerous pipe targets
