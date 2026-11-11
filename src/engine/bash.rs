@@ -36,8 +36,15 @@ pub fn check_command(
         return check_literal_resolution(command, config, safety_level, bash_rules, exfil_rules);
     }
 
-    check_rules(command, &analysis, config, safety_level, bash_rules, exfil_rules)
-        .unwrap_or_else(|| Decision::allow("passed all checks"))
+    check_rules(
+        command,
+        &analysis,
+        config,
+        safety_level,
+        bash_rules,
+        exfil_rules,
+    )
+    .unwrap_or_else(|| Decision::allow("passed all checks"))
 }
 
 /// A variable in command position was found. If every one of them is assigned a plain

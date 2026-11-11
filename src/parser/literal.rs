@@ -295,9 +295,32 @@ fn prefilter(source: &str) -> Option<()> {
                 return None;
             }
         }
+        // A typed `{ } [ ] ~ < >` in the same word: the shell expands typed text more
+        // than a substituted value (a brace list, a range, `~`, a redirect that takes
+        // a digit as its file descriptor), so the expanded text would mean more than
+        // what runs.
+        if word_around(bytes, i, end)
+            .iter()
+            .any(|b| matches!(b, b'{' | b'}' | b'[' | b']' | b'~' | b'<' | b'>'))
+        {
+            return None;
+        }
         i = end;
     }
     Some(())
+}
+
+/// The bytes of the shell word that holds the reference at `start..end`: out to the
+/// nearest blank or `;` `|` `&` `(` `)` on each side. `<` and `>` stay in the word, as
+/// they are what this looks for.
+fn word_around(bytes: &[u8], start: usize, end: usize) -> &[u8] {
+    let breaks = |b: &u8| matches!(b, b' ' | b';' | b'|' | b'&' | b'(' | b')');
+    let from = bytes[..start].iter().rposition(breaks).map_or(0, |p| p + 1);
+    let to = bytes[end..]
+        .iter()
+        .position(breaks)
+        .map_or(bytes.len(), |p| end + p);
+    &bytes[from..to]
 }
 
 fn parse(source: &str) -> Option<tree_sitter::Tree> {
