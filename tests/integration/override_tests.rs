@@ -1,7 +1,7 @@
 //! Integration tests for override mechanisms
 
-use std::env;
 use claude_guardrails::{Config, HookInput, SecurityEngine};
+use std::env;
 
 fn check_with_env(command: &str, env_var: &str, env_val: &str) -> bool {
     // Set the environment variable
@@ -104,13 +104,11 @@ fn test_allowlist_matching() {
     use claude_guardrails::rules::allowlist::{AllowEntry, AllowlistConfig, CompiledAllowlist};
 
     let config = AllowlistConfig {
-        allow: vec![
-            AllowEntry {
-                pattern: r"rm\s+-rf\s+\./node_modules".to_string(),
-                reason: "Allow cleaning node_modules".to_string(),
-                tool: Some("Bash".to_string()),
-            },
-        ],
+        allow: vec![AllowEntry {
+            pattern: r"rm\s+-rf\s+\./node_modules".to_string(),
+            reason: "Allow cleaning node_modules".to_string(),
+            tool: Some("Bash".to_string()),
+        }],
     };
 
     let allowlist = CompiledAllowlist::from_config(&config).unwrap();
@@ -132,7 +130,10 @@ fn test_allowlist_matching() {
 #[test]
 fn test_default_config() {
     let config = Config::default();
-    assert_eq!(config.general.safety_level, claude_guardrails::SafetyLevel::High);
+    assert_eq!(
+        config.general.safety_level,
+        claude_guardrails::SafetyLevel::High
+    );
     assert!(config.general.audit_log);
     assert!(!config.bash.wrappers.is_empty());
     assert!(config.bash.block_variable_commands);

@@ -57,10 +57,7 @@ pub fn check_command(
 
     // 5. Check for environment hijacking (this uses regex but on full command)
     if shell::has_env_hijacking(command) {
-        return Decision::deny(
-            "env-hijacking",
-            "Environment variable hijacking detected",
-        );
+        return Decision::deny("env-hijacking", "Environment variable hijacking detected");
     }
 
     // 6. Check each normalized command against dangerous patterns
@@ -154,10 +151,7 @@ fn check_command_fallback(
 
     // Check for environment hijacking
     if shell::has_env_hijacking(command) {
-        return Decision::deny(
-            "env-hijacking",
-            "Environment variable hijacking detected",
-        );
+        return Decision::deny("env-hijacking", "Environment variable hijacking detected");
     }
 
     // Split compound commands and check each part
@@ -283,7 +277,13 @@ mod tests {
         let config = test_config();
         let (bash_rules, exfil_rules) = compile_rules(SafetyLevel::High);
 
-        let decision = check_command("ls -la", &config, SafetyLevel::High, &bash_rules, &exfil_rules);
+        let decision = check_command(
+            "ls -la",
+            &config,
+            SafetyLevel::High,
+            &bash_rules,
+            &exfil_rules,
+        );
         assert!(decision.is_allow());
     }
 
@@ -292,7 +292,13 @@ mod tests {
         let config = test_config();
         let (bash_rules, exfil_rules) = compile_rules(SafetyLevel::High);
 
-        let decision = check_command("rm -rf /", &config, SafetyLevel::High, &bash_rules, &exfil_rules);
+        let decision = check_command(
+            "rm -rf /",
+            &config,
+            SafetyLevel::High,
+            &bash_rules,
+            &exfil_rules,
+        );
         assert!(decision.is_deny());
         assert_eq!(decision.rule_id(), Some("rm-root"));
     }
@@ -302,7 +308,13 @@ mod tests {
         let config = test_config();
         let (bash_rules, exfil_rules) = compile_rules(SafetyLevel::High);
 
-        let decision = check_command("sudo rm -rf /", &config, SafetyLevel::High, &bash_rules, &exfil_rules);
+        let decision = check_command(
+            "sudo rm -rf /",
+            &config,
+            SafetyLevel::High,
+            &bash_rules,
+            &exfil_rules,
+        );
         assert!(decision.is_deny());
     }
 
@@ -446,7 +458,13 @@ mod tests {
         let config = test_config();
         let (bash_rules, exfil_rules) = compile_rules(SafetyLevel::High);
 
-        let decision = check_command("git status", &config, SafetyLevel::High, &bash_rules, &exfil_rules);
+        let decision = check_command(
+            "git status",
+            &config,
+            SafetyLevel::High,
+            &bash_rules,
+            &exfil_rules,
+        );
         assert!(decision.is_allow());
     }
 
@@ -455,7 +473,13 @@ mod tests {
         let config = test_config();
         let (bash_rules, exfil_rules) = compile_rules(SafetyLevel::High);
 
-        let decision = check_command("npm install", &config, SafetyLevel::High, &bash_rules, &exfil_rules);
+        let decision = check_command(
+            "npm install",
+            &config,
+            SafetyLevel::High,
+            &bash_rules,
+            &exfil_rules,
+        );
         assert!(decision.is_allow());
     }
 
@@ -489,7 +513,10 @@ mod tests {
             &bash_rules,
             &exfil_rules,
         );
-        assert!(decision.is_deny(), "Backtick substitution should be blocked");
+        assert!(
+            decision.is_deny(),
+            "Backtick substitution should be blocked"
+        );
         assert_eq!(decision.rule_id(), Some("dynamic-command"));
     }
 
@@ -506,7 +533,10 @@ mod tests {
             &bash_rules,
             &exfil_rules,
         );
-        assert!(decision.is_allow(), "Variable in argument should be allowed");
+        assert!(
+            decision.is_allow(),
+            "Variable in argument should be allowed"
+        );
     }
 
     #[test]
