@@ -14,7 +14,8 @@ pub static SECRET_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
         Regex::new(r"(?i)access[_-]?token\s*[=:]\s*['\x22]?[a-zA-Z0-9_]{16,}").unwrap(),
         // AWS patterns
         Regex::new(r"AKIA[0-9A-Z]{16}").unwrap(), // AWS Access Key
-        Regex::new(r"(?i)aws[_-]?secret[_-]?access[_-]?key\s*[=:]\s*['\x22]?[0-9a-zA-Z/+]{20,}").unwrap(),
+        Regex::new(r"(?i)aws[_-]?secret[_-]?access[_-]?key\s*[=:]\s*['\x22]?[0-9a-zA-Z/+]{20,}")
+            .unwrap(),
         // GitHub tokens
         Regex::new(r"gh[pousr]_[A-Za-z0-9_]{36,}").unwrap(),
         Regex::new(r"github_pat_[A-Za-z0-9_]{22,}").unwrap(),
@@ -64,9 +65,7 @@ mod tests {
 
     #[test]
     fn test_contains_secret_github() {
-        assert!(contains_secret(
-            "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-        ));
+        assert!(contains_secret("ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"));
         assert!(contains_secret(
             "github_pat_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
         ));
