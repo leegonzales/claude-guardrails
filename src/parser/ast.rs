@@ -249,6 +249,14 @@ fn extract_command(node: &Node, source: &str) -> Option<NormalizedCommand> {
     })
 }
 
+/// The command is the body of a redirected statement: `command_name` is in a `command`
+/// whose parent is a `redirected_statement`.
+fn is_redirected(name: &Node) -> bool {
+    name.parent()
+        .and_then(|command| command.parent())
+        .is_some_and(|statement| statement.kind() == "redirected_statement")
+}
+
 /// Normalize a command name, handling quote obfuscation and detecting dynamic names
 /// Returns (normalized_name, is_dynamic)
 fn normalize_command_name(node: &Node, source: &str) -> (String, bool) {
@@ -290,8 +298,9 @@ fn normalize_command_name(node: &Node, source: &str) -> (String, bool) {
             }
             // The parser reads `0<f $X hi` as the command `0` with a redirection and
             // takes the real command for a redirection target. A number is not a command
-            // name, so it gets the dynamic verdict.
-            "number" => {
+            // name there, so it gets the dynamic verdict. (It also reads the `$2` of
+            // `d=$1/$2` as a name; that one has no redirection around it.)
+            "number" if is_redirected(node) => {
                 let text = child.utf8_text(source.as_bytes()).unwrap_or("0");
                 return (text.to_string(), true);
             }

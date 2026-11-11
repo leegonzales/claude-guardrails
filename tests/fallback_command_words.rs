@@ -411,7 +411,14 @@ fn a_numbered_redirection_before_a_variable_command_is_judged() {
     ] {
         assert_judged_dynamic(text);
     }
-    for text in ["echo hi 0<f", "ls 0<f $X", "ls 0>f"] {
+    for text in [
+        "echo hi 0<f",
+        "ls 0<f $X",
+        "ls 0>f",
+        // The parser also reads the `$2` here as a command name; it is not one.
+        "d=$1/$2",
+        "for s in a; do set -- $s; d=$1/$2; echo $d; done",
+    ] {
         assert_allowed(text);
     }
 }
